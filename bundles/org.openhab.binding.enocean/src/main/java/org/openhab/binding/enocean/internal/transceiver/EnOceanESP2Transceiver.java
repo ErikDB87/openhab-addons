@@ -58,7 +58,8 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
 
     @Override
     protected void processMessage(byte firstByte) {
-        logger.trace("'processMessage()' called, with firstByte: '{}'.", firstByte);
+        logger.trace("'processMessage()' called, with firstByte: '{}'.",
+                "0x" + Integer.toString(Byte.toUnsignedInt(firstByte), 16));
         byte[] readingBuffer = new byte[ENOCEAN_MAX_DATA];
         int bytesRead = -1;
         byte byteBuffer;
@@ -90,7 +91,8 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
                             state = ReadingState.WaitingForSecondSyncByte;
                             logger.trace("Received First Sync Byte");
                         } else {
-                            logger.trace("Received first byte wasn't '0xA5'. It was '{}'.", byteBuffer);
+                            logger.trace("Received first byte wasn't '0xA5'. It was '{}'.",
+                                    "0x" + Integer.toString(Byte.toUnsignedInt(byteBuffer), 16));
                         }
                         break;
                     case WaitingForSecondSyncByte:
