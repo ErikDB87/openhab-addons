@@ -201,6 +201,7 @@ public class EnOceanBridgeHandler extends ConfigStatusBridgeHandler implements T
             if (localTransceiver == null) {
                 updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
                         "Failed to initialize EnOceanTransceiver");
+                logger.error("Failed to initialize EnOceanTransceiver");
                 return;
             }
 
@@ -217,6 +218,9 @@ public class EnOceanBridgeHandler extends ConfigStatusBridgeHandler implements T
                     if (baseId.length != 4) {
                         updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
                                 "RS485 BaseId has the wrong format. It is expected to be an 8 digit hex code, for example 01000000");
+                        logger.error(
+                                "RS485 BaseId has the wrong format. It is expected to be an 8 digit hex code, for example 01000000");
+                        return;
                     }
                 } else {
                     baseId = new byte[4];

@@ -38,6 +38,7 @@ public class EnOceanESP3Transceiver extends EnOceanTransceiver {
     public EnOceanESP3Transceiver(String path, TransceiverErrorListener errorListener,
             ScheduledExecutorService scheduler, @Nullable SerialPortManager serialPortManager) {
         super(path, errorListener, scheduler, serialPortManager);
+        logger.trace("new EnOceanESP3Transceiver created");
     }
 
     enum ReadingState {

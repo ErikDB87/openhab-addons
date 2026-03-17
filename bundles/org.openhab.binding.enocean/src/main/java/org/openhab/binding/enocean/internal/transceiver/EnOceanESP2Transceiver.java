@@ -40,6 +40,7 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
     public EnOceanESP2Transceiver(String path, TransceiverErrorListener errorListener,
             ScheduledExecutorService scheduler, @Nullable SerialPortManager serialPortManager) {
         super(path, errorListener, scheduler, serialPortManager);
+        logger.trace("new EnOceanESP2Transceiver created");
     }
 
     enum ReadingState {
@@ -57,6 +58,7 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
 
     @Override
     protected void processMessage(byte firstByte) {
+        logger.trace("'processMessage()' called, with firstByte: '{}'.", firstByte);
         byte[] readingBuffer = new byte[ENOCEAN_MAX_DATA];
         int bytesRead = -1;
         byte byteBuffer;
@@ -74,6 +76,7 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
 
             Future<?> localReadingTask = readingTask;
             if (localReadingTask == null || localReadingTask.isCancelled()) {
+                logger.trace("'localReadingTask' is null or cancelled");
                 return;
             }
 
@@ -86,12 +89,18 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
                         if (byteBuffer == ESP2Packet.ENOCEAN_ESP2_FIRSTSYNC_BYTE) {
                             state = ReadingState.WaitingForSecondSyncByte;
                             logger.trace("Received First Sync Byte");
+                        } else {
+                            logger.trace("Received first byte wasn't '0xA5'. It was '{}'.", byteBuffer);
                         }
                         break;
                     case WaitingForSecondSyncByte:
                         if (byteBuffer == ESP2Packet.ENOCEAN_ESP2_SECONDSYNC_BYTE) {
                             state = ReadingState.ReadingHeader;
                             logger.trace("Received Second Sync Byte");
+                        } else {
+                            state = ReadingState.WaitingForFirstSyncByte;
+                            logger.trace(
+                                    "Received non-matching second sync byte - first sync byte was a false positive");
                         }
                         break;
                     case ReadingHeader: {
@@ -153,6 +162,7 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
                             currentPosition = 0;
                             dataLength = packetType = -1;
                         } else {
+                            logger.trace("'currentPosition == dataLength'");
                             dataBuffer[currentPosition++] = byteBuffer;
                         }
                         break;

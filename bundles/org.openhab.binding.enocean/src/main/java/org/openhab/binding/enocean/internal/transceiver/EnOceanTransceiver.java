@@ -230,8 +230,12 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
                     receivePackets();
                 }
             });
+            logger.info("EnOceanSerialTransceiver RX thread started");
+        } else {
+            logger.debug(
+                    "EnOceanSerialTransceiver RX thread was apparently already started: 'readingTask == null': {} & 'readingTask.isCancelled()': {}",
+                    readingTask == null, readingTask.isCancelled());
         }
-        logger.info("EnOceanSerialTransceiver RX thread started");
     }
 
     public void shutDown() {
@@ -296,6 +300,7 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
     }
 
     private void receivePackets() {
+        logger.trace("'receivePackets()' was called");
         byte[] buffer = new byte[1];
 
         Future<?> readingTask = this.readingTask;
@@ -305,6 +310,7 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
                 processMessage(buffer[0]);
             }
         }
+        logger.trace("'receivePackets()': 'readingTask' is null or cancelled");
     }
 
     protected abstract void processMessage(byte firstByte);
