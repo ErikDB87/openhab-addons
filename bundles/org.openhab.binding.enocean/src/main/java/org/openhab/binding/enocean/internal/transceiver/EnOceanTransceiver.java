@@ -300,17 +300,27 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
     }
 
     private void receivePackets() {
-        logger.trace("'receivePackets()' was called");
-        byte[] buffer = new byte[1];
+        try {
+            logger.trace("'receivePackets()' was called");
+            byte[] buffer = new byte[1];
 
-        Future<?> readingTask = this.readingTask;
-        while (readingTask != null && !readingTask.isCancelled()) {
-            int bytesRead = read(buffer, 1);
-            if (bytesRead > 0) {
-                processMessage(buffer[0]);
+            Future<?> readingTask = this.readingTask;
+            while (readingTask != null && !readingTask.isCancelled()) {
+                int bytesRead = read(buffer, 1);
+                logger.trace("'bytesRead' = {}", bytesRead);
+                if (bytesRead > 0) {
+                    // logger.trace("'processMessage()' is called, with firstByte: '{}'.", "0x" + String.format("%02d",
+                    // Integer.toString(Byte.toUnsignedInt(buffer[0]), 16)));
+                    logger.trace("'processMessage()' is called, with firstByte: '{}'.",
+                            "0x" + String.format("%02x", Byte.toUnsignedInt(buffer[0])).toUpperCase());
+                    processMessage(buffer[0]);
+                }
             }
+            logger.trace("'receivePackets()': 'readingTask' is null or cancelled");
+        } catch (Exception e) {
+            logger.trace("Exiting 'receivePackets()' because of exception: {}", e.getMessage(), e);
+            throw e;
         }
-        logger.trace("'receivePackets()': 'readingTask' is null or cancelled");
     }
 
     protected abstract void processMessage(byte firstByte);
