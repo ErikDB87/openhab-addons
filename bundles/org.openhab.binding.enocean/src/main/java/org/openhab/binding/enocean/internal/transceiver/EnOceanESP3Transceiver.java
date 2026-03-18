@@ -73,6 +73,9 @@ public class EnOceanESP3Transceiver extends EnOceanTransceiver {
 
             Future<?> localReadingTask = readingTask;
             if (localReadingTask == null || localReadingTask.isCancelled()) {
+                logger.trace(
+                        "'EnOceanESP3Transceiver': 'processMessage(byte firstByte)': 'localReadingTask' is {}, cancelled is {}",
+                        localReadingTask, localReadingTask == null ? "" : localReadingTask.isCancelled());
                 return;
             }
 

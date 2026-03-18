@@ -224,6 +224,9 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
     public void startReceiving(ScheduledExecutorService scheduler) {
         @Nullable
         Future<?> readingTask = this.readingTask;
+        logger.trace("'startReceiving(ScheduledExecutorService scheduler)': 'readingTask' is {}, cancelled is {}",
+                readingTask, readingTask == null ? "" : readingTask.isCancelled());
+
         if (readingTask == null || readingTask.isCancelled()) {
             this.readingTask = scheduler.submit(new Runnable() {
                 @Override
@@ -250,6 +253,8 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
         }
 
         Future<?> readingTask = this.readingTask;
+        logger.trace("'shutDown()': 'readingTask' is {}, cancelled is {}", readingTask,
+                readingTask == null ? "" : readingTask.isCancelled());
         if (readingTask != null) {
             readingTask.cancel(true);
 
@@ -262,6 +267,8 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
                 }
             }
             this.readingTask = null;
+            logger.trace("'shutDown()' (if (readingTask != null)): 'readingTask' is {}, cancelled is {}", readingTask,
+                    readingTask == null ? "" : readingTask.isCancelled());
         }
 
         listeners.clear();
@@ -306,16 +313,18 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
             byte[] buffer = new byte[1];
 
             Future<?> readingTask = this.readingTask;
+            logger.trace("'receivePackets()': 'readingTask' is {}, cancelled is {}", readingTask,
+                    readingTask == null ? "" : readingTask.isCancelled());
             while (readingTask != null && !readingTask.isCancelled()) {
                 int bytesRead = read(buffer, 1);
                 logger.trace("'bytesRead' = {}", bytesRead);
                 if (bytesRead > 0) {
-                    logger.trace("'processMessage()' is called, with firstByte: '{}'.",
-                            "0x" + String.format("%02x", Byte.toUnsignedInt(buffer[0])).toUpperCase());
+                    logger.trace("'processMessage()' is called, with firstByte: '{}'.", byteToHex(buffer[0]));
                     processMessage(buffer[0]);
                 }
             }
-            logger.trace("'receivePackets()': 'readingTask' is null or cancelled");
+            logger.trace("Exiting 'receivePackets()': 'readingTask' is {}, cancelled is {}", readingTask,
+                    readingTask == null ? "" : readingTask.isCancelled());
         } catch (Exception e) {
             logger.trace("Exiting 'receivePackets()' because of exception: {}", e.getMessage(), e);
             throw e;
@@ -336,7 +345,10 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
         } else {
             logger.warn("Cannot read from null stream");
             Future<?> readingTask = this.readingTask;
+            logger.trace("'read(byte[] buffer, int length)': 'readingTask' is {}, cancelled is {}.", readingTask,
+                    readingTask == null ? "" : readingTask.isCancelled());
             if (readingTask != null) {
+                logger.trace("'localReadingTask' will now be cancelled and set to null");
                 readingTask.cancel(true);
                 this.readingTask = null;
             }

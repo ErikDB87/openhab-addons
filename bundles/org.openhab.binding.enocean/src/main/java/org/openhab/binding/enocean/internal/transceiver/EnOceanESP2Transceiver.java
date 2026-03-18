@@ -76,7 +76,9 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
 
             Future<?> localReadingTask = readingTask;
             if (localReadingTask == null || localReadingTask.isCancelled()) {
-                logger.trace("'localReadingTask' is null or cancelled");
+                logger.trace(
+                        "'EnOceanESP2Transceiver': 'processMessage(byte firstByte)': 'localReadingTask' is {}, cancelled is {}",
+                        localReadingTask, localReadingTask == null ? "" : localReadingTask.isCancelled());
                 return;
             }
 
@@ -90,8 +92,7 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
                             state = ReadingState.WaitingForSecondSyncByte;
                             logger.trace("Received First Sync Byte");
                         } else {
-                            logger.trace("Received first byte wasn't '0xA5'. It was '{}'.",
-                                    "0x" + String.format("%02x", Byte.toUnsignedInt(byteBuffer)).toUpperCase());
+                            logger.trace("Received first byte wasn't '0xA5'. It was '{}'.", byteToHex(byteBuffer));
                         }
                         break;
                     case WaitingForSecondSyncByte:
