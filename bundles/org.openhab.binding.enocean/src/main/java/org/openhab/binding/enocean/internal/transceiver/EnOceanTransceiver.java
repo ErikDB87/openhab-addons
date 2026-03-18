@@ -67,6 +67,7 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
     private static final int ENOCEAN_DEFAULT_BAUD = 57600;
     protected String path;
     private @Nullable SerialPort serialPort;
+    private static final char[] HEX_ARRAY = "0123456789ABCDEF".toCharArray();
 
     class Request {
         @Nullable
@@ -309,8 +310,6 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
                 int bytesRead = read(buffer, 1);
                 logger.trace("'bytesRead' = {}", bytesRead);
                 if (bytesRead > 0) {
-                    // logger.trace("'processMessage()' is called, with firstByte: '{}'.", "0x" + String.format("%02d",
-                    // Integer.toString(Byte.toUnsignedInt(buffer[0]), 16)));
                     logger.trace("'processMessage()' is called, with firstByte: '{}'.",
                             "0x" + String.format("%02x", Byte.toUnsignedInt(buffer[0])).toUpperCase());
                     processMessage(buffer[0]);
@@ -507,5 +506,10 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
                 this.notify();
             }
         }
+    }
+
+    public static String byteToHex(byte b) {
+        int i = b & 0xFF;
+        return new StringBuilder(4).append("0x").append(HEX_ARRAY[i >>> 4]).append(HEX_ARRAY[i & 0x0F]).toString();
     }
 }
