@@ -169,7 +169,7 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
                             currentPosition = 0;
                             dataLength = packetType = -1;
                         } else {
-                            logger.trace("'currentPosition == dataLength'");
+                            logger.trace("'currentPosition != dataLength'");
                             dataBuffer[currentPosition++] = byteBuffer;
                         }
                         break;
