@@ -147,6 +147,9 @@ public class EnOceanESP2Transceiver extends EnOceanTransceiver {
                 try {
                     read = is.read(bytes, pos, doRead);
                 } catch (IOException e) {
+                    if (inputStreamInShutDown) {
+                        break;
+                    }
                     logger.debug("Unable to read from serial port: {}", e.getMessage());
                     logger.trace("", e);
                     TransceiverErrorListener errorListener = this.errorListener;

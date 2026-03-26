@@ -61,6 +61,7 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
     // Thread management
     protected @Nullable Future<?> readingTask = null;
     private @Nullable Future<?> timeOutTask = null;
+    boolean inputStreamInShutDown = false;
 
     protected Logger logger = LoggerFactory.getLogger(EnOceanTransceiver.class);
 
@@ -238,6 +239,7 @@ public abstract class EnOceanTransceiver implements SerialPortEventListener {
     public void shutDown() {
         logger.debug("shutting down transceiver");
         logger.debug("Interrupt rx Thread");
+        inputStreamInShutDown = true;
 
         Future<?> timeOutTask = this.timeOutTask;
         if (timeOutTask != null) {
