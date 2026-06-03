@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jetty.client.HttpClient;
+import org.eclipse.jetty.client.WWWAuthenticationProtocolHandler;
 import org.eclipse.jetty.util.ssl.SslContextFactory;
 import org.openhab.binding.unifiprotect.internal.UnifiProtectBindingConstants;
 import org.openhab.binding.unifiprotect.internal.UnifiProtectDiscoveryService;
@@ -116,6 +117,7 @@ public class UnifiProtectNVRHandler extends BaseBridgeHandler {
                 new SslContextFactory.Client(true));
         try {
             httpClient.start();
+            httpClient.getProtocolHandlers().remove(WWWAuthenticationProtocolHandler.NAME);
         } catch (Exception e) {
             throw new IllegalStateException("Failed to start HTTP client", e);
         }
