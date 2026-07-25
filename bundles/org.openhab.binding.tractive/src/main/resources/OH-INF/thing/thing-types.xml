@@ -1,0 +1,781 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<thing:thing-descriptions bindingId="tractive"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
+	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
+
+	<bridge-type id="account">
+		<label>Tractive Account</label>
+		<description>Connects to the Tractive cloud using your account credentials. All tracker things require this bridge.</description>
+
+		<config-description>
+			<parameter name="email" type="text" required="true">
+				<context>email</context>
+				<label>Email</label>
+				<description>Tractive account email address</description>
+			</parameter>
+			<parameter name="password" type="text" required="true">
+				<context>password</context>
+				<label>Password</label>
+				<description>Tractive account password</description>
+			</parameter>
+		</config-description>
+	</bridge-type>
+
+	<thing-type id="dog-6">
+		<supported-bridge-type-refs>
+			<bridge-type-ref id="account"/>
+		</supported-bridge-type-refs>
+
+		<label>Tractive Dog 6</label>
+		<description>A Tractive Dog 6 GPS pet tracker. Provides real-time location, battery, health data, and commands.</description>
+
+		<channel-groups>
+			<channel-group id="position" typeId="position-group"/>
+			<channel-group id="hardware" typeId="hardware-group"/>
+			<channel-group id="tracker-status" typeId="tracker-status-group"/>
+			<channel-group id="device-info" typeId="device-info-group"/>
+			<channel-group id="commands" typeId="commands-group"/>
+			<channel-group id="health" typeId="health-group"/>
+			<channel-group id="dog" typeId="dog-group"/>
+			<channel-group id="profile" typeId="profile-group"/>
+		</channel-groups>
+
+		<config-description>
+			<parameter name="trackerId" type="text" required="true" min="8" max="8">
+				<label>Tracker ID</label>
+				<description>8-character Tractive tracker hardware ID (e.g. "HBDYUFSC")</description>
+			</parameter>
+			<parameter name="trackedPetId" type="text" required="true">
+				<label>Pet ID</label>
+				<description>Tractive pet (trackable object) ID linked to this tracker</description>
+			</parameter>
+			<parameter name="refreshInterval" type="integer" unit="s" min="0">
+				<label>Refresh Interval</label>
+				<description>How often to re-poll position, hardware battery level, and health/dog data as a backstop
+					alongside the
+					real-time channel (seconds). Defaults to 180; set to 0 to rely on the real-time
+					channel alone, which means some
+					Channels never get updated. Tracker Status, Device Info, and Profile are never on this
+					interval.</description>
+				<default>180</default>
+				<advanced>true</advanced>
+			</parameter>
+		</config-description>
+	</thing-type>
+
+	<channel-group-type id="position-group">
+		<label>Position</label>
+		<channels>
+			<channel id="location" typeId="system.location"/>
+			<channel id="last-position-time" typeId="last-position-time"/>
+			<channel id="speed" typeId="speed"/>
+			<channel id="sensor-used" typeId="sensor-used"/>
+			<channel id="position-accuracy" typeId="position-accuracy"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="hardware-group">
+		<label>Hardware</label>
+		<channels>
+			<channel id="battery-level" typeId="system.battery-level"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="tracker-status-group">
+		<label>Tracker Status</label>
+		<channels>
+			<channel id="charging-state" typeId="charging-state"/>
+			<channel id="battery-state" typeId="battery-state"/>
+			<channel id="tracker-state" typeId="tracker-state"/>
+			<channel id="zone-type" typeId="zone-type"/>
+			<channel id="tracker-state-reason" typeId="tracker-state-reason"/>
+			<channel id="zone-id" typeId="zone-id"/>
+			<channel id="zone-entered-at" typeId="zone-entered-at"/>
+			<channel id="zone-last-seen-at" typeId="zone-last-seen-at"/>
+			<channel id="power-saving-zone-id" typeId="power-saving-zone-id"/>
+			<channel id="last-contact" typeId="last-contact"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="device-info-group">
+		<label>Device Info</label>
+		<channels>
+			<channel id="model-number" typeId="model-number"/>
+			<channel id="hw-edition" typeId="hw-edition"/>
+			<channel id="firmware-version" typeId="firmware-version"/>
+			<channel id="geofence-sensitivity" typeId="geofence-sensitivity"/>
+			<channel id="battery-save-mode" typeId="battery-save-mode"/>
+			<channel id="subscription-status" typeId="subscription-status"/>
+			<channel id="subscription-valid-to" typeId="subscription-valid-to"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="commands-group">
+		<label>Commands</label>
+		<channels>
+			<channel id="buzzer" typeId="buzzer"/>
+			<channel id="buzzer-timeout" typeId="control-timeout">
+				<label>Buzzer Timeout</label>
+			</channel>
+			<channel id="buzzer-remaining" typeId="control-remaining">
+				<label>Buzzer Remaining</label>
+			</channel>
+			<channel id="led" typeId="led"/>
+			<channel id="led-timeout" typeId="control-timeout">
+				<label>LED Timeout</label>
+			</channel>
+			<channel id="led-remaining" typeId="control-remaining">
+				<label>LED Remaining</label>
+			</channel>
+			<channel id="live-tracking" typeId="live-tracking"/>
+			<channel id="live-tracking-timeout" typeId="control-timeout">
+				<label>Live Tracking Timeout</label>
+			</channel>
+			<channel id="live-tracking-remaining" typeId="control-remaining">
+				<label>Live Tracking Remaining</label>
+			</channel>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="health-group">
+		<label>Health</label>
+		<channels>
+			<channel id="activity-recorded" typeId="activity-recorded"/>
+			<channel id="activity-goal" typeId="activity-goal"/>
+			<channel id="sleep-day" typeId="sleep-day"/>
+			<channel id="sleep-night" typeId="sleep-night"/>
+			<channel id="sleep-calm" typeId="sleep-calm"/>
+			<channel id="resting-heart-rate-status" typeId="resting-heart-rate-status"/>
+			<channel id="resting-respiratory-rate-status" typeId="resting-respiratory-rate-status"/>
+			<channel id="unseen-health-alerts" typeId="unseen-health-alerts"/>
+			<channel id="activity-synced-at" typeId="activity-synced-at"/>
+			<channel id="scratch" typeId="scratch-status"/>
+			<channel id="activity-hourly-distribution" typeId="activity-hourly-distribution"/>
+			<channel id="resting-heart-rate-day-offset" typeId="day-offset">
+				<label>Heart Rate Day Offset</label>
+			</channel>
+			<channel id="resting-respiratory-rate-day-offset" typeId="day-offset">
+				<label>Respiratory Rate Day Offset</label>
+			</channel>
+			<channel id="scratch-day-offset" typeId="day-offset">
+				<label>Scratch Day Offset</label>
+			</channel>
+			<channel id="associated-report-types" typeId="associated-report-types"/>
+			<channel id="separation-phase-ongoing" typeId="separation-phase-ongoing"/>
+			<channel id="separation-phase-started-at" typeId="separation-phase-started-at"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="dog-group">
+		<label>Dog</label>
+		<channels>
+			<channel id="bark" typeId="bark-status"/>
+			<channel id="bark-day-offset" typeId="day-offset">
+				<label>Bark Day Offset</label>
+			</channel>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="profile-group">
+		<label>Profile</label>
+		<channels>
+			<channel id="breed-ids" typeId="breed-ids"/>
+			<channel id="gender" typeId="gender"/>
+			<channel id="birthday" typeId="birthday"/>
+			<channel id="height" typeId="pet-height"/>
+			<channel id="weight" typeId="pet-weight"/>
+			<channel id="neutered" typeId="neutered"/>
+			<channel id="home-location" typeId="home-location"/>
+			<channel id="last-updated" typeId="profile-last-updated"/>
+			<channel id="leaderboard-opt-out" typeId="leaderboard-opt-out"/>
+			<channel id="read-only" typeId="profile-read-only"/>
+			<channel id="created-at" typeId="profile-created-at"/>
+			<channel id="pet-type" typeId="pet-type"/>
+			<channel id="chip-id" typeId="chip-id"/>
+			<channel id="lim" typeId="lim"/>
+			<channel id="ribcage" typeId="ribcage"/>
+			<channel id="instagram-username" typeId="instagram-username"/>
+			<channel id="weight-is-default" typeId="weight-is-default"/>
+			<channel id="height-is-default" typeId="height-is-default"/>
+			<channel id="profile-picture-id" typeId="profile-picture-id"/>
+			<channel id="gallery-picture-ids" typeId="gallery-picture-ids"/>
+			<channel id="walk-sharing-consent" typeId="walk-sharing-consent"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-type id="last-position-time">
+		<item-type>DateTime</item-type>
+		<label>Last Position Time</label>
+		<description>Time of the most recent position report</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="speed">
+		<item-type>Number:Speed</item-type>
+		<label>Speed</label>
+		<description>Current movement speed (null when stationary)</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Speed</tag>
+		</tags>
+		<state readOnly="true" pattern="%.1f %unit%"/>
+	</channel-type>
+
+	<channel-type id="sensor-used" advanced="true">
+		<item-type>String</item-type>
+		<label>Sensor Used</label>
+		<description>Positioning sensor used for the last fix (GPS, KNOWN_WIFI, PHONE)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="position-accuracy">
+		<item-type>Number:Length</item-type>
+		<label>Position Accuracy</label>
+		<description>Estimated position uncertainty in metres (always 30 for KNOWN_WIFI)</description>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+
+	<channel-type id="charging-state">
+		<item-type>String</item-type>
+		<label>Charging State</label>
+		<description>Current charging state (e.g. CHARGING, NOT_CHARGING)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="battery-state">
+		<item-type>String</item-type>
+		<label>Battery State</label>
+		<description>Battery health state (e.g. FULL, REGULAR, LOW)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="tracker-state" advanced="true">
+		<item-type>String</item-type>
+		<label>Tracker State</label>
+		<description>Operational state of the tracker (e.g. OPERATIONAL)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-type">
+		<item-type>String</item-type>
+		<label>Zone Type</label>
+		<description>Kind of the currently most relevant geofence zone (POWER_SAVING, SAFE, DANGER)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="last-contact">
+		<item-type>DateTime</item-type>
+		<label>Last Contact</label>
+		<description>Time of the most recent successful contact with this tracker, via REST poll or real-time channel event</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="buzzer">
+		<item-type>Switch</item-type>
+		<label>Buzzer</label>
+		<description>Activates or deactivates the tracker buzzer</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="led">
+		<item-type>Switch</item-type>
+		<label>LED</label>
+		<description>Activates or deactivates the tracker LED</description>
+		<tags>
+			<tag>Control</tag>
+			<tag>Light</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="live-tracking">
+		<item-type>Switch</item-type>
+		<label>Live Tracking</label>
+		<description>Enables or disables live tracking mode (higher GPS update rate)</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="activity-recorded">
+		<item-type>Number:Time</item-type>
+		<label>Active Time</label>
+		<description>Total time of activity recorded today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%d %unit%"/>
+	</channel-type>
+
+	<channel-type id="activity-goal">
+		<item-type>Number:Time</item-type>
+		<label>Activity Goal</label>
+		<description>Daily activity time goal</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%d %unit%"/>
+	</channel-type>
+
+	<channel-type id="sleep-day">
+		<item-type>Number:Time</item-type>
+		<label>Daytime Sleep</label>
+		<description>Total time of daytime sleep today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%d %unit%"/>
+	</channel-type>
+
+	<channel-type id="sleep-night">
+		<item-type>Number:Time</item-type>
+		<label>Night Sleep</label>
+		<description>Total time of night-time sleep today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%d %unit%"/>
+	</channel-type>
+
+	<channel-type id="sleep-calm">
+		<item-type>Number:Time</item-type>
+		<label>Calm Time</label>
+		<description>Total time of calm (resting but not sleep) today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%d %unit%"/>
+	</channel-type>
+
+	<channel-type id="resting-heart-rate-status">
+		<item-type>String</item-type>
+		<label>Heart Rate Status</label>
+		<description>Heart rate status from health overview (e.g. NORMAL)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="resting-respiratory-rate-status">
+		<item-type>String</item-type>
+		<label>Respiratory Rate Status</label>
+		<description>Respiratory rate status from health overview (e.g. NORMAL)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="unseen-health-alerts" advanced="true">
+		<item-type>Number</item-type>
+		<label>Unseen Health Alerts</label>
+		<description>Number of unseen health alerts</description>
+		<state readOnly="true" pattern="%d"/>
+	</channel-type>
+
+	<channel-type id="activity-synced-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Activity Synced At</label>
+		<description>Time when the activity data was last synced from the tracker</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="bark-status">
+		<item-type>String</item-type>
+		<label>Bark Status</label>
+		<description>Bark detection status from health overview (e.g. NORMAL, ELEVATED)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="scratch-status">
+		<item-type>String</item-type>
+		<label>Scratch Status</label>
+		<description>Scratch detection status from health overview (e.g. INFREQUENT)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="activity-hourly-distribution" advanced="true">
+		<item-type>String</item-type>
+		<label>Activity Hourly Distribution</label>
+		<description>Tractive's 24-element per-hour activity breakdown of the current day: a comma-separated list of 24
+			integers</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="day-offset" advanced="true">
+		<item-type>Number</item-type>
+		<label>Day Offset</label>
+		<description>Which day the sibling status channel's value covers: 0 = today, -1 = yesterday. Reads -1
+			while today's
+			value is not yet available (typically during the pet's active daytime hours, before it
+			has had a fresh resting
+			period), then flips to 0.</description>
+		<state readOnly="true" pattern="%d"/>
+	</channel-type>
+
+	<channel-type id="associated-report-types" advanced="true">
+		<item-type>String</item-type>
+		<label>Associated Report Types</label>
+		<description>Comma-separated types of the reports bundled with the health overview (e.g.
+			HEALTH_WEEKLY_REPORT)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="separation-phase-ongoing">
+		<item-type>Switch</item-type>
+		<label>Separation Phase Ongoing</label>
+		<description>Whether a separation-anxiety monitoring phase is currently ongoing for this pet. Send ON to
+			start a phase,
+			OFF to stop the current one. The confirmed state arrives via the health overview a few
+			seconds later; until then the
+			channel shows openHAB's optimistic echo.</description>
+		<tags>
+			<tag>Switch</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="separation-phase-started-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Separation Phase Started At</label>
+		<description>When the current separation-anxiety monitoring phase started; undefined while none is
+			ongoing</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="tracker-state-reason" advanced="true">
+		<item-type>String</item-type>
+		<label>Tracker State Reason</label>
+		<description>Why the tracker's operational state is what it is (e.g. POWER_SAVING, STALE_POSITION)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Zone ID</label>
+		<description>Internal ID of the geofence zone currently most relevant to the tracker's position</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-entered-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Zone Entered At</label>
+		<description>Time the tracker entered its currently most relevant geofence zone</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-last-seen-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Zone Last Seen At</label>
+		<description>Time the tracker was last confirmed still inside its currently most relevant geofence zone</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="power-saving-zone-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Power Saving Zone ID</label>
+		<description>Internal ID of the tracker's configured Power Saving Zone</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="model-number" advanced="true">
+		<item-type>String</item-type>
+		<label>Model Number</label>
+		<description>Tractive hardware model code (e.g. TG6C)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="hw-edition" advanced="true">
+		<item-type>String</item-type>
+		<label>Hardware Edition</label>
+		<description>Hardware color/edition variant of the physical unit (e.g. BROWN-LINES)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="firmware-version" advanced="true">
+		<item-type>String</item-type>
+		<label>Firmware Version</label>
+		<description>Onboard firmware version string</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="geofence-sensitivity" advanced="true">
+		<item-type>String</item-type>
+		<label>Geofence Sensitivity</label>
+		<description>Configured geofence entry/exit detection sensitivity (e.g. HIGH)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="battery-save-mode">
+		<item-type>Switch</item-type>
+		<label>Battery Save Mode</label>
+		<description>Whether the tracker's aggressive battery-save mode is enabled. This is a cloud-side account
+			setting (not a
+			device command); it takes effect within about 30 seconds regardless of whether the
+			tracker is currently dormant. A
+			change made in the Tractive app is only reflected here after the next
+			"Refresh hardware" action, REFRESH command, or
+			Thing restart.</description>
+		<tags>
+			<tag>Switch</tag>
+		</tags>
+	</channel-type>
+
+	<channel-type id="subscription-status" advanced="true">
+		<item-type>String</item-type>
+		<label>Subscription Status</label>
+		<description>Status of the Tractive subscription covering this tracker (e.g. ACTIVE). A non-active subscription
+			disables commands, live tracking, and real-time updates. Fetched at Thing setup or via the "Refresh hardware"
+			action,
+			never on the regular polling schedule.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="subscription-valid-to" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Subscription Valid To</label>
+		<description>Date the Tractive subscription covering this tracker is paid through</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="control-timeout" advanced="true">
+		<item-type>Number:Time</item-type>
+		<label>Command Timeout</label>
+		<description>Configured maximum duration this activation is allowed to run before auto-stopping</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+
+	<channel-type id="control-remaining" advanced="true">
+		<item-type>Number:Time</item-type>
+		<label>Command Remaining</label>
+		<description>Seconds left before this activation auto-stops</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%.1f %unit%"/>
+	</channel-type>
+
+	<channel-type id="breed-ids" advanced="true">
+		<item-type>String</item-type>
+		<label>Breed IDs</label>
+		<description>Comma-separated Tractive internal breed-catalog ID(s); not human-readable breed names. Only refreshed at
+			Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="gender" advanced="true">
+		<item-type>String</item-type>
+		<label>Gender</label>
+		<description>The pet's sex (M or F). Only refreshed at Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="birthday" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Birthday</label>
+		<description>The pet's date of birth, as entered in the Tractive app. Only refreshed at Thing setup or via the
+			"Refresh profile" action.</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="pet-height" advanced="true">
+		<item-type>Number:Length</item-type>
+		<label>Height</label>
+		<description>The pet's height, as entered in the Tractive app. Only refreshed at Thing setup or via the "Refresh
+			profile" action.</description>
+		<state readOnly="true" pattern="%.2f %unit%"/>
+	</channel-type>
+
+	<channel-type id="pet-weight" advanced="true">
+		<item-type>Number:Mass</item-type>
+		<label>Weight</label>
+		<description>The pet's weight, as entered in the Tractive app. Only refreshed at Thing setup or via the "Refresh
+			profile" action.</description>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+
+	<channel-type id="neutered" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Neutered</label>
+		<description>Whether the pet is spayed/neutered, as entered in the Tractive app. Only refreshed at Thing setup or via
+			the "Refresh profile" action.</description>
+		<tags>
+			<tag>Status</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="home-location" advanced="true">
+		<item-type>Location</item-type>
+		<label>Home Location</label>
+		<description>The pet's configured home location, as entered in the Tractive app. Only refreshed at Thing setup or via
+			the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-last-updated" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Profile Last Updated</label>
+		<description>Time the Profile channel group was last fetched — at Thing setup or via the "Refresh profile" action,
+			never on the regular polling schedule</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="leaderboard-opt-out" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Leaderboard Opt-Out</label>
+		<description>Whether the owner opted this pet out of Tractive's activity-leaderboard/community feature. Only
+			refreshed
+			at Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-read-only" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Read Only</label>
+		<description>Whether the authenticated account only has shared/invited-level access to this pet, as opposed to
+			owner-level access. Only refreshed at Thing setup or via the "Refresh profile" action.</description>
+		<tags>
+			<tag>Status</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-created-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Profile Created At</label>
+		<description>Time this pet profile was first created in Tractive. Only refreshed at Thing setup or via the
+			"Refresh
+			profile" action.</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="pet-type" advanced="true">
+		<item-type>String</item-type>
+		<label>Pet Type</label>
+		<description>The pet's species (e.g. DOG). Only refreshed at Thing setup or via the "Refresh profile"
+			action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="chip-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Microchip ID</label>
+		<description>The pet's microchip ID, if entered in the app. Only refreshed at Thing setup or via the "Refresh
+			profile"
+			action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="lim" advanced="true">
+		<item-type>Number:Length</item-type>
+		<label>Leg Index Measurement (LIM)</label>
+		<description>Distance from the patella to the calcaneal tuber on the left hind limb, one of two inputs to the
+			Feline
+			Body Mass Index (FBMI). Only populated for cat profiles -- always null for a DOG. Only refreshed at
+			Thing setup or via
+			the "Refresh profile" action.</description>
+		<state readOnly="true" pattern="%.2f %unit%"/>
+	</channel-type>
+
+	<channel-type id="ribcage" advanced="true">
+		<item-type>Number:Length</item-type>
+		<label>Ribcage Circumference</label>
+		<description>Ribcage circumference at the 9th cranial rib, the other FBMI input alongside LIM. Only populated
+			for cat
+			profiles -- always null for a DOG. Only refreshed at Thing setup or via the "Refresh profile"
+			action.</description>
+		<state readOnly="true" pattern="%.2f %unit%"/>
+	</channel-type>
+
+	<channel-type id="instagram-username" advanced="true">
+		<item-type>String</item-type>
+		<label>Instagram Username</label>
+		<description>The pet's linked Instagram handle, if set. Only refreshed at Thing setup or via the "Refresh
+			profile"
+			action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="weight-is-default" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Weight Is Default</label>
+		<description>Whether the Weight channel is a real user-entered value or a breed-average default. Only refreshed
+			at
+			Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="height-is-default" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Height Is Default</label>
+		<description>Whether the Height channel is a real user-entered value or a breed-average default. Only refreshed
+			at
+			Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-picture-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Profile Picture ID</label>
+		<description>ID referencing the pet's profile photo asset in Tractive's media storage. Only refreshed at Thing
+			setup or
+			via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="gallery-picture-ids" advanced="true">
+		<item-type>String</item-type>
+		<label>Gallery Picture IDs</label>
+		<description>Comma-separated IDs referencing the pet's gallery photo assets. Only refreshed at Thing setup or
+			via the
+			"Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="walk-sharing-consent" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Walk Sharing Consent</label>
+		<description>Whether the owner consented to sharing this pet's walk data, a Tractive community/walk-sharing
+			feature.
+			Only refreshed at Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+</thing:thing-descriptions>

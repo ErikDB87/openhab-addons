@@ -1,0 +1,572 @@
+/*
+ * Copyright (c) 2010-2026 Contributors to the openHAB project
+ *
+ * See the NOTICE file(s) distributed with this work for additional
+ * information.
+ *
+ * This program and the accompanying materials are made available under the
+ * terms of the Eclipse Public License 2.0 which is available at
+ * http://www.eclipse.org/legal/epl-2.0
+ *
+ * SPDX-License-Identifier: EPL-2.0
+ */
+package org.openhab.binding.tractive.internal.handler;
+
+import static org.openhab.binding.tractive.internal.TractiveBindingConstants.*;
+
+import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
+import org.eclipse.jdt.annotation.NonNullByDefault;
+import org.eclipse.jdt.annotation.Nullable;
+import org.eclipse.jetty.client.HttpClient;
+import org.eclipse.jetty.client.api.ContentResponse;
+import org.eclipse.jetty.client.api.Request;
+import org.eclipse.jetty.client.util.StringContentProvider;
+import org.eclipse.jetty.http.HttpMethod;
+import org.eclipse.jetty.http.HttpStatus;
+import org.openhab.binding.tractive.internal.channel.TractiveChannelAuthException;
+import org.openhab.binding.tractive.internal.channel.TractiveChannelListener;
+import org.openhab.binding.tractive.internal.channel.TractiveEventListener;
+import org.openhab.binding.tractive.internal.channel.TractiveKeepAliveTimeoutException;
+import org.openhab.binding.tractive.internal.config.TractiveAccountConfiguration;
+import org.openhab.binding.tractive.internal.discovery.TractiveDiscoveryService;
+import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
+import org.openhab.binding.tractive.internal.util.TractiveTaskTracker;
+import org.openhab.core.thing.Bridge;
+import org.openhab.core.thing.ChannelUID;
+import org.openhab.core.thing.ThingStatus;
+import org.openhab.core.thing.ThingStatusDetail;
+import org.openhab.core.thing.binding.BaseBridgeHandler;
+import org.openhab.core.thing.binding.ThingHandlerService;
+import org.openhab.core.types.Command;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.google.gson.Gson;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
+
+/**
+ * The {@link TractiveAccountHandler} implements the Tractive account bridge.
+ * It handles authentication, the real-time NDJSON channel, and dispatches events
+ * to registered {@link TractiveEventListener} instances (the tracker thing handlers).
+ *
+ * @author Erik De Boeck - Initial contribution
+ */
+@NonNullByDefault
+public class TractiveAccountHandler extends BaseBridgeHandler {
+
+    private static final long TOKEN_REFRESH_INTERVAL_MINUTES = 10;
+    private static final long RECONNECT_INITIAL_DELAY_S = 15;
+    private static final long RECONNECT_MAX_DELAY_S = 300;
+    private static final int SUBSCRIPTION_CHECK_INTERVAL_HOURS = 24;
+    private static final int TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE = 3;
+    private static final long TOKEN_EXPIRY_ESCALATION_BUFFER_S = TOKEN_REFRESH_INTERVAL_MINUTES * 60 * 2;
+
+    private final Logger logger = LoggerFactory.getLogger(TractiveAccountHandler.class);
+    private final HttpClient httpClient;
+    private final Gson gson = new Gson();
+    private final TractiveTaskTracker taskTracker = new TractiveTaskTracker();
+    private final CopyOnWriteArrayList<TractiveEventListener> eventListeners = new CopyOnWriteArrayList<>();
+    private final Map<String, JsonObject> lastKnownSubscriptions = new ConcurrentHashMap<>();
+
+    private volatile @Nullable String accessToken;
+    private @Nullable String userId;
+    private volatile @Nullable TractiveAccountConfiguration config;
+    private long expiresAt;
+    private long channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private long bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private long tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private int consecutiveTokenRefreshFailures;
+    private @Nullable ScheduledFuture<?> tokenRefreshFuture;
+
+    private volatile @Nullable TractiveDiscoveryService discoveryService;
+
+    /**
+     * Maximum tokens available at once in the shared {@code graph.tractive.com} rate-limit bucket. Real
+     * measurements: escalating concurrent bursts against {@code GET tracker/{trackerId}} -- 2/4/8 concurrent calls all
+     * clean, 14 concurrent got 4/14 failures. Set to 8, the largest burst directly observed 100% clean, not the ~10 a
+     * token-bucket model infers from the (already-failing) 14-call burst -- the more conservative number to build a
+     * real limit on.
+     */
+    private static final double GRAPH_API_BUCKET_CAPACITY = 8.0;
+
+    /**
+     * Tokens regained per second while the bucket is below capacity, i.e. roughly one token every 6.7 s.
+     * Real measurements bracket the true refill rate to approximately 0.15-0.23 tokens/s, converging from two
+     * independent experiments -- recovery time after a deliberate trigger, and the spacing needed between sequential
+     * calls to avoid triggering one at all. 0.15 is the conservative (slower-refilling) end of that range, not the
+     * midpoint or upper bound.
+     */
+    private static final double GRAPH_API_BUCKET_REFILL_PER_SECOND = 0.15;
+
+    private final SharedRateLimitBucket graphApiRateLimitBucket = new SharedRateLimitBucket(GRAPH_API_BUCKET_CAPACITY,
+            GRAPH_API_BUCKET_REFILL_PER_SECOND);
+
+    private final Object authLock = new Object();
+
+    /**
+     * Creates a new account bridge handler using the shared openHAB HTTP client.
+     */
+    public TractiveAccountHandler(Bridge bridge, HttpClient httpClient) {
+        super(bridge);
+        this.httpClient = httpClient;
+    }
+
+    @Override
+    public void initialize() {
+        updateStatus(ThingStatus.UNKNOWN);
+        scheduleInitializeBridge(0);
+    }
+
+    private void scheduleInitializeBridge(long delaySeconds) {
+        taskTracker.track(scheduler.schedule(this::initializeBridge, delaySeconds, TimeUnit.SECONDS));
+    }
+
+    private void initializeBridge() {
+        TractiveAccountConfiguration localConfig = getConfigAs(TractiveAccountConfiguration.class);
+        if (localConfig.email.isBlank() || localConfig.password.isBlank()) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
+                    "Email and password must be configured");
+            return;
+        }
+        config = localConfig;
+        try {
+            authenticate(localConfig.email, localConfig.password, accessToken);
+            updateStatus(ThingStatus.ONLINE);
+            bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+            channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+            tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+
+            TractiveDiscoveryService discovery = discoveryService;
+            if (discovery != null) {
+                discovery.runAutomaticScanOnce();
+            }
+
+            taskTracker.track(scheduler.scheduleWithFixedDelay(this::checkSubscriptions, 0,
+                    SUBSCRIPTION_CHECK_INTERVAL_HOURS, TimeUnit.HOURS));
+
+            scheduleCheckAndRefreshToken(TOKEN_REFRESH_INTERVAL_MINUTES * 60);
+
+            startChannelLoop();
+        } catch (InterruptedIOException e) {
+            // Thread already re-interrupted inside authenticate(); exit without touching status.
+        } catch (IOException e) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Authentication failed: " + e.getMessage());
+            long nextDelay = bridgeAuthRetryDelaySeconds;
+            bridgeAuthRetryDelaySeconds = Math.min(bridgeAuthRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+            scheduleInitializeBridge(nextDelay);
+        }
+    }
+
+    private boolean authenticate(String email, String password, @Nullable String knownToken) throws IOException {
+        synchronized (authLock) {
+            if (!Objects.equals(accessToken, knownToken)) {
+                return false;
+            }
+            String bodyJson = gson.toJson(Map.of(FIELD_PLATFORM_EMAIL, email, FIELD_PLATFORM_TOKEN, password,
+                    FIELD_GRANT_TYPE, VALUE_GRANT_TYPE_TRACTIVE));
+            ContentResponse response;
+            try {
+                response = httpClient.newRequest(API_BASE_URL + "auth/token").method(HttpMethod.POST)
+                        .header(HEADER_TRACTIVE_CLIENT, API_CLIENT_ID).header(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON)
+                        .content(new StringContentProvider(bodyJson, StandardCharsets.UTF_8)).send();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                InterruptedIOException ioe = new InterruptedIOException("Authentication interrupted");
+                ioe.initCause(e);
+                throw ioe;
+            } catch (TimeoutException e) {
+                throw new IOException("Authentication request timed out: " + e.getMessage(), e);
+            } catch (ExecutionException e) {
+                throw new IOException("Authentication request failed: " + e.getMessage(), e);
+            }
+            if (response.getStatus() != HttpStatus.OK_200) {
+                throw new IOException("Authentication failed with HTTP " + response.getStatus() + ": "
+                        + response.getContentAsString());
+            }
+            logger.trace("Auth response: {}", response.getContentAsString());
+            JsonElement parsed = JsonParser.parseString(response.getContentAsString());
+            if (!parsed.isJsonObject()) {
+                throw new IOException("Unexpected authentication response: " + response.getContentAsString());
+            }
+            JsonObject body = parsed.getAsJsonObject();
+            if (!body.has(FIELD_ACCESS_TOKEN) || !body.has(FIELD_USER_ID) || !body.has(FIELD_EXPIRES_AT)) {
+                throw new IOException("Unexpected authentication response: " + response.getContentAsString());
+            }
+            accessToken = body.get(FIELD_ACCESS_TOKEN).getAsString();
+            userId = body.get(FIELD_USER_ID).getAsString();
+            expiresAt = body.get(FIELD_EXPIRES_AT).getAsLong();
+            logger.debug("Authenticated as user_id={}, token expires at epoch={}", userId, expiresAt);
+            return true;
+        }
+    }
+
+    private synchronized void scheduleCheckAndRefreshToken(long delaySeconds) {
+        ScheduledFuture<?> pending = tokenRefreshFuture;
+        if (pending != null) {
+            pending.cancel(false);
+        }
+        tokenRefreshFuture = taskTracker
+                .track(scheduler.schedule(this::checkAndRefreshToken, delaySeconds, TimeUnit.SECONDS));
+    }
+
+    private void checkAndRefreshToken() {
+        TractiveAccountConfiguration currentConfig = config;
+        if (currentConfig == null) {
+            return;
+        }
+        long nowEpochSeconds = System.currentTimeMillis() / 1000;
+        logger.trace("Token expiry check: {}s remaining", expiresAt - nowEpochSeconds);
+        try {
+            if (authenticate(currentConfig.email, currentConfig.password, accessToken)) {
+                updateStatus(ThingStatus.ONLINE);
+            }
+            consecutiveTokenRefreshFailures = 0;
+            tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+            scheduleCheckAndRefreshToken(TOKEN_REFRESH_INTERVAL_MINUTES * 60);
+        } catch (InterruptedIOException e) {
+            // Thread already re-interrupted inside authenticate(); exit without touching status or rescheduling.
+        } catch (IOException | RuntimeException e) {
+            handleTokenRefreshFailure(e);
+            long nextDelay = tokenRefreshRetryDelaySeconds;
+            tokenRefreshRetryDelaySeconds = Math.min(tokenRefreshRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+            scheduleCheckAndRefreshToken(nextDelay);
+        }
+    }
+
+    /**
+     * Reacts to a failed token (re-)authentication from {@link #checkAndRefreshToken()} or
+     * {@link #refreshToken(String)}. A {@link RuntimeException} is a bug that will not fix itself, so it takes the
+     * bridge {@code OFFLINE} at once. An {@link IOException} is almost always a transient transport failure while
+     * the current token is still usable, so the bridge is only taken {@code OFFLINE} once failures have persisted
+     * ({@link #TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE} in a row) or the current token is within
+     * {@link #TOKEN_EXPIRY_ESCALATION_BUFFER_S} of expiry. The caller schedules the retry either way.
+     */
+    private void handleTokenRefreshFailure(Exception e) {
+        if (e instanceof RuntimeException) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Token refresh failed: " + e.getMessage());
+            logger.warn("Token refresh failed unexpectedly, bridge offline: {}", e.getMessage());
+            return;
+        }
+        consecutiveTokenRefreshFailures++;
+        long secondsToExpiry = expiresAt - System.currentTimeMillis() / 1000;
+        if (consecutiveTokenRefreshFailures >= TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE
+                || secondsToExpiry < TOKEN_EXPIRY_ESCALATION_BUFFER_S) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Token refresh failed: " + e.getMessage());
+            logger.warn("Token refresh failed ({} consecutive, {}s to token expiry), bridge offline: {}",
+                    consecutiveTokenRefreshFailures, secondsToExpiry, e.getMessage());
+        } else {
+            logger.debug("Token refresh attempt {} failed, retrying (current token valid for {}s): {}",
+                    consecutiveTokenRefreshFailures, secondsToExpiry, e.getMessage());
+        }
+    }
+
+    private void startChannelLoop() {
+        TractiveChannelListener channelListener = new TractiveChannelListener(this::dispatchChannelEvent);
+        scheduleChannelConnect(channelListener, 0);
+    }
+
+    private void scheduleChannelConnect(TractiveChannelListener channelListener, long delaySeconds) {
+        taskTracker.track(scheduler.schedule(() -> {
+            String token = accessToken;
+            String uid = userId;
+            if (token == null || uid == null) {
+                return;
+            }
+            try {
+                channelListener.run(httpClient, token, uid);
+                channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+                scheduleChannelConnect(channelListener, RECONNECT_INITIAL_DELAY_S);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            } catch (TractiveKeepAliveTimeoutException e) {
+                logger.debug("Channel keep-alive stale, reconnecting: {}", e.getMessage());
+                scheduleChannelConnect(channelListener, RECONNECT_INITIAL_DELAY_S);
+            } catch (TractiveChannelAuthException e) {
+                logger.warn("{}, triggering re-auth", e.getMessage());
+                refreshToken(token);
+                long nextDelay = channelReconnectDelaySeconds;
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+                scheduleChannelConnect(channelListener, nextDelay);
+            } catch (InterruptedIOException e) {
+                logger.debug("Channel connection timed out: {}", e.getMessage());
+                long nextDelay = channelReconnectDelaySeconds;
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+                scheduleChannelConnect(channelListener, nextDelay);
+            } catch (IOException e) {
+                logger.debug("Channel disconnected: {}", e.getMessage());
+                long nextDelay = channelReconnectDelaySeconds;
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+                scheduleChannelConnect(channelListener, nextDelay);
+            } catch (RuntimeException e) {
+                logger.warn("Unexpected error in channel listener: {}", e.getMessage());
+                long nextDelay = channelReconnectDelaySeconds;
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+                scheduleChannelConnect(channelListener, nextDelay);
+            }
+        }, delaySeconds, TimeUnit.SECONDS));
+    }
+
+    private void dispatchChannelEvent(JsonObject event) {
+        channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+
+        String messageType = event.has(FIELD_MESSAGE) ? event.get(FIELD_MESSAGE).getAsString() : "";
+        String targetId = resolveTargetId(event, messageType);
+        if (targetId.isEmpty()) {
+            return;
+        }
+        logger.trace("Dispatching channel event: messageType={}, targetId={}", messageType, targetId);
+        for (TractiveEventListener listener : eventListeners) {
+            if (listener.getTargetIds().contains(targetId)) {
+                listener.onChannelEvent(messageType, event);
+            }
+        }
+    }
+
+    /**
+     * Extracts the target ID from the event. Checks, in order: the "_id" field (REST-shaped
+     * envelopes), "tracker_id" ({@code tracker_status} messages), "device_id" ({@code start_failed}/
+     * {@code command_confirmed} messages), nested "content.petId" ({@code health_overview} messages),
+     * then falls back to parsing "message[ID]".
+     */
+    private String resolveTargetId(JsonObject event, String messageType) {
+        if (event.has(FIELD_ID)) {
+            return event.get(FIELD_ID).getAsString();
+        }
+        if (event.has(FIELD_TRACKER_ID)) {
+            return event.get(FIELD_TRACKER_ID).getAsString();
+        }
+        if (event.has(FIELD_DEVICE_ID)) {
+            return event.get(FIELD_DEVICE_ID).getAsString();
+        }
+        if (event.has(FIELD_CONTENT) && event.get(FIELD_CONTENT).isJsonObject()) {
+            JsonObject content = event.get(FIELD_CONTENT).getAsJsonObject();
+            if (content.has(FIELD_PET_ID)) {
+                return content.get(FIELD_PET_ID).getAsString();
+            }
+        }
+        int start = messageType.indexOf('[');
+        int end = messageType.indexOf(']');
+        if (start >= 0 && end > start) {
+            return messageType.substring(start + 1, end);
+        }
+        return "";
+    }
+
+    /**
+     * Registers a listener to receive real-time channel events for its tracker and pet IDs.
+     * Duplicate registrations are silently ignored.
+     */
+    public void registerListener(TractiveEventListener listener) {
+        eventListeners.addIfAbsent(listener);
+        lastKnownSubscriptions.forEach((id, subscription) -> {
+            if (listener.getTargetIds().contains(id)) {
+                listener.onSubscriptionUpdate(subscription);
+            }
+        });
+    }
+
+    /**
+     * Removes a previously registered channel event listener.
+     */
+    public void unregisterListener(TractiveEventListener listener) {
+        eventListeners.remove(listener);
+    }
+
+    /**
+     * Returns the current Bearer access token, or {@code null} if not yet authenticated.
+     */
+    public @Nullable String getAccessToken() {
+        return accessToken;
+    }
+
+    /**
+     * Re-authenticates using the stored credentials, replacing the current access token.
+     * Called by tracker handlers when a request returns HTTP 401.
+     * If another thread has already refreshed the token since {@code knownToken} was captured, the call is a no-op.
+     *
+     * @param knownToken the token the caller held when the 401 was received
+     */
+    public void refreshToken(@Nullable String knownToken) {
+        TractiveAccountConfiguration currentConfig = config;
+        if (currentConfig == null) {
+            return;
+        }
+        try {
+            if (authenticate(currentConfig.email, currentConfig.password, knownToken)) {
+                updateStatus(ThingStatus.ONLINE);
+            }
+            consecutiveTokenRefreshFailures = 0;
+            tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+        } catch (InterruptedIOException e) {
+            // Thread already re-interrupted inside authenticate(); exit without touching status.
+        } catch (IOException | RuntimeException e) {
+            handleTokenRefreshFailure(e);
+            long nextDelay = tokenRefreshRetryDelaySeconds;
+            tokenRefreshRetryDelaySeconds = Math.min(tokenRefreshRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+            scheduleCheckAndRefreshToken(nextDelay);
+        }
+    }
+
+    /**
+     * Returns the authenticated Tractive user ID, or {@code null} if not yet authenticated.
+     */
+    public @Nullable String getUserId() {
+        return userId;
+    }
+
+    /**
+     * Returns the shared openHAB HTTP client.
+     */
+    public HttpClient getHttpClient() {
+        return httpClient;
+    }
+
+    /**
+     * Returns the shared rate-limit bucket modeling {@code graph.tractive.com}'s account-level request budget.
+     */
+    public SharedRateLimitBucket getGraphApiRateLimitBucket() {
+        return graphApiRateLimitBucket;
+    }
+
+    /**
+     * Decorates a {@link Request} with the three required Tractive auth headers.
+     * Returns the same request for chaining.
+     */
+    public Request addAuthHeaders(Request request) {
+        String token = accessToken;
+        String uid = userId;
+        if (token != null && uid != null) {
+            request.header(HEADER_TRACTIVE_CLIENT, API_CLIENT_ID).header(HEADER_TRACTIVE_USER, uid)
+                    .header(HEADER_AUTHORIZATION, AUTH_BEARER_PREFIX + token)
+                    .header(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON);
+        }
+        return request;
+    }
+
+    /**
+     * Fetches {@code user/widget-data} on bridge start and every {@link #SUBSCRIPTION_CHECK_INTERVAL_HOURS}
+     * hours after. For every tracker on the account it does two things: (1) caches the {@code subscription}
+     * object in {@link #lastKnownSubscriptions} and pushes it to every registered {@link TractiveEventListener}
+     * whose {@link TractiveEventListener#getTargetIds() target IDs} match — the sole source of the
+     * {@code device-info#subscription-status}/{@code subscription-valid-to} channels, so tracker handlers never
+     * fetch this account-level bundle themselves; (2) logs a WARN if the subscription is not {@code ACTIVE}.
+     * Recurring because a subscription can lapse while openHAB is running, and because a transient failure of one run
+     * is picked up by the next. A tracker that registers after a run is caught up from the cache in
+     * {@link #registerListener}.
+     *
+     * A lapsed or paused subscription silently disables commands, live tracking, and the real-time stream —
+     * which otherwise looks identical to the tracker sitting in a deep power-saving state, so this is the fast
+     * way to rule that cause in or out. This runs daily and the data changes at most monthly, so a missed run
+     * is low-stakes: a transient error (HTTP 429, 5xx, or a network timeout) is logged at DEBUG, and only a
+     * persistent one (any other non-2xx, or an unexpected response shape) at WARN, since that means the check
+     * itself is broken and a lapsed subscription will go unflagged. Never throws.
+     */
+    private void checkSubscriptions() {
+        String url = API_BASE_URL + "user/widget-data";
+        try {
+            ContentResponse response = addAuthHeaders(httpClient.newRequest(url).method(HttpMethod.GET)).send();
+            int status = response.getStatus();
+            String body = response.getContentAsString();
+            logger.trace("GET {} → HTTP {}: {}", url, status, body);
+            if (status != HttpStatus.OK_200) {
+                if (status == HttpStatus.TOO_MANY_REQUESTS_429 || status >= 500) {
+                    logger.debug("Subscription check skipped: user/widget-data returned a transient HTTP {}", status);
+                } else {
+                    logger.warn(
+                            "Subscription check could not run: user/widget-data returned HTTP {} — a lapsed subscription (which silently disables commands and live tracking) will not be flagged. The Tractive API may have changed.",
+                            status);
+                }
+                return;
+            }
+            JsonElement parsed = JsonParser.parseString(body);
+            JsonElement trackers = parsed.isJsonObject() ? parsed.getAsJsonObject().get(FIELD_TRACKERS) : null;
+            if (trackers == null || !trackers.isJsonArray()) {
+                logger.warn(
+                        "Subscription check could not run: unexpected user/widget-data response shape — a lapsed subscription will not be flagged.");
+                return;
+            }
+            for (JsonElement element : trackers.getAsJsonArray()) {
+                if (!element.isJsonObject()) {
+                    continue;
+                }
+                JsonObject entry = element.getAsJsonObject();
+                JsonElement trackerEl = entry.get(FIELD_TRACKER);
+                JsonElement subEl = entry.get(FIELD_SUBSCRIPTION);
+                if (trackerEl == null || !trackerEl.isJsonObject() || subEl == null || !subEl.isJsonObject()) {
+                    continue;
+                }
+                JsonObject subscription = subEl.getAsJsonObject();
+                JsonElement idEl = trackerEl.getAsJsonObject().get(FIELD_WIDGET_TRACKER_ID);
+                String id = idEl != null && idEl.isJsonPrimitive() ? idEl.getAsString() : null;
+
+                JsonElement statusEl = subscription.get(FIELD_STATUS);
+                String subStatus = statusEl != null && statusEl.isJsonPrimitive() ? statusEl.getAsString() : "unknown";
+                if (!VALUE_SUBSCRIPTION_ACTIVE.equals(subStatus)) {
+                    logger.warn(
+                            "Tracker {} subscription status is '{}' — commands, live tracking, and real-time updates may not work until it is renewed in the Tractive app.",
+                            id != null ? id : "?", subStatus);
+                }
+
+                if (id != null) {
+                    lastKnownSubscriptions.put(id, subscription);
+                    for (TractiveEventListener listener : eventListeners) {
+                        if (listener.getTargetIds().contains(id)) {
+                            listener.onSubscriptionUpdate(subscription);
+                        }
+                    }
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (RuntimeException | TimeoutException | ExecutionException e) {
+            logger.debug("Subscription check failed: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Registers the discovery service so the bridge can trigger a one-shot automatic scan
+     * once it comes online.
+     */
+    public void registerDiscoveryService(TractiveDiscoveryService service) {
+        this.discoveryService = service;
+    }
+
+    /**
+     * No-op: the account bridge has no channels of its own.
+     */
+    @Override
+    public void handleCommand(ChannelUID channelUID, Command command) {
+    }
+
+    @Override
+    public void dispose() {
+        taskTracker.cancelAll();
+        accessToken = null;
+        userId = null;
+        config = null;
+        super.dispose();
+    }
+
+    @Override
+    public Collection<Class<? extends ThingHandlerService>> getServices() {
+        return List.of(TractiveDiscoveryService.class);
+    }
+}
