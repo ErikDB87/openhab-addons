@@ -460,6 +460,7 @@
     <module>org.openhab.binding.tplinkrouter</module>
     <module>org.openhab.binding.tplinksmarthome</module>
     <module>org.openhab.binding.tr064</module>
+    <module>org.openhab.binding.tractive</module>
     <module>org.openhab.binding.tradfri</module>
     <module>org.openhab.binding.tuya</module>
     <module>org.openhab.binding.twilio</module>
@@ -803,7 +804,6 @@
           </execution>
         </executions>
       </plugin>
-
       <!-- 3. XML validation plugin -->
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
