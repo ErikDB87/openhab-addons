@@ -12,30 +12,30 @@
  */
 package org.openhab.binding.tractive.internal;
 
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Future;
+
 import org.eclipse.jdt.annotation.NonNullByDefault;
-import org.openhab.core.thing.ChannelUID;
-import org.openhab.core.thing.Thing;
-import org.openhab.core.thing.binding.BaseThingHandler;
-import org.openhab.core.types.Command;
 
 /**
- * Retained stub — superseded by {@link TractiveDog6Handler}.
- * This class is unused and will be removed in a future cleanup.
+ * Tracks {@link Future} instances so they can all be cancelled together on disposal.
+ * Thread-safe; safe to call from any thread.
  *
  * @author Erik De Boeck - Initial contribution
  */
 @NonNullByDefault
-public class TractiveHandler extends BaseThingHandler {
+public class TractiveTaskTracker {
 
-    public TractiveHandler(Thing thing) {
-        super(thing);
+    private final CopyOnWriteArrayList<Future<?>> tasks = new CopyOnWriteArrayList<>();
+
+    public void track(Future<?> future) {
+        tasks.add(future);
     }
 
-    @Override
-    public void handleCommand(ChannelUID channelUID, Command command) {
-    }
-
-    @Override
-    public void initialize() {
+    public void cancelAll() {
+        for (Future<?> task : tasks) {
+            task.cancel(true);
+        }
+        tasks.clear();
     }
 }

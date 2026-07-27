@@ -18,16 +18,21 @@ import java.util.Set;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
+import org.eclipse.jetty.client.HttpClient;
+import org.openhab.core.io.net.http.HttpClientFactory;
+import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingTypeUID;
 import org.openhab.core.thing.binding.BaseThingHandlerFactory;
 import org.openhab.core.thing.binding.ThingHandler;
 import org.openhab.core.thing.binding.ThingHandlerFactory;
+import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
+import org.osgi.service.component.annotations.Reference;
 
 /**
- * The {@link TractiveHandlerFactory} is responsible for creating things and thing
- * handlers.
+ * The {@link TractiveHandlerFactory} creates handlers for the Tractive account bridge
+ * and the Dog 6 tracker thing.
  *
  * @author Erik De Boeck - Initial contribution
  */
@@ -35,7 +40,14 @@ import org.osgi.service.component.annotations.Component;
 @Component(configurationPid = "binding.tractive", service = ThingHandlerFactory.class)
 public class TractiveHandlerFactory extends BaseThingHandlerFactory {
 
-    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_SAMPLE);
+    private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_ACCOUNT, THING_TYPE_DOG6);
+
+    private final HttpClient httpClient;
+
+    @Activate
+    public TractiveHandlerFactory(@Reference HttpClientFactory httpClientFactory) {
+        this.httpClient = httpClientFactory.getCommonHttpClient();
+    }
 
     @Override
     public boolean supportsThingType(ThingTypeUID thingTypeUID) {
@@ -46,8 +58,11 @@ public class TractiveHandlerFactory extends BaseThingHandlerFactory {
     protected @Nullable ThingHandler createHandler(Thing thing) {
         ThingTypeUID thingTypeUID = thing.getThingTypeUID();
 
-        if (THING_TYPE_SAMPLE.equals(thingTypeUID)) {
-            return new TractiveHandler(thing);
+        if (THING_TYPE_ACCOUNT.equals(thingTypeUID)) {
+            return new TractiveAccountHandler((Bridge) thing, httpClient);
+        }
+        if (THING_TYPE_DOG6.equals(thingTypeUID)) {
+            return new TractiveDog6Handler(thing);
         }
 
         return null;
