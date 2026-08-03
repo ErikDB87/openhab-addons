@@ -12,6 +12,7 @@
 
 		<config-description>
 			<parameter name="email" type="text" required="true">
+				<context>email</context>
 				<label>Email</label>
 				<description>Tractive account email address</description>
 			</parameter>
@@ -38,21 +39,23 @@
 			<channel-group id="hardware" typeId="hardware-group"/>
 			<channel-group id="commands" typeId="commands-group"/>
 			<channel-group id="health" typeId="health-group"/>
+			<channel-group id="dog" typeId="dog-group"/>
 		</channel-groups>
 
 		<config-description>
-			<parameter name="trackerId" type="text" required="true">
+			<parameter name="trackerId" type="text" required="true" min="8" max="8">
 				<label>Tracker ID</label>
-				<description>8-character Tractive tracker hardware ID (e.g. FCTPOEBK)</description>
+				<description>8-character Tractive tracker hardware ID (e.g. "HBDYUFSC")</description>
 			</parameter>
-			<parameter name="trackableId" type="text" required="true">
-				<label>Trackable Object ID</label>
+			<parameter name="trackedPetId" type="text" required="true">
+				<label>Pet ID</label>
 				<description>Tractive pet (trackable object) ID linked to this tracker</description>
 			</parameter>
-			<parameter name="refreshInterval" type="integer" unit="s" min="10">
+			<parameter name="refreshInterval" type="integer" unit="s" min="0">
 				<label>Refresh Interval</label>
-				<description>How often to poll the Tractive REST API (seconds)</description>
-				<default>30</default>
+				<description>How often to re-poll tracker details from the REST API (seconds). Set to 0 to disable — real-time
+					updates arrive via the channel regardless.</description>
+				<default>0</default>
 				<advanced>true</advanced>
 			</parameter>
 		</config-description>
@@ -63,10 +66,9 @@
 	<channel-group-type id="position-group">
 		<label>Position</label>
 		<channels>
-			<channel id="location" typeId="location"/>
+			<channel id="location" typeId="system.location"/>
 			<channel id="last-position-time" typeId="last-position-time"/>
 			<channel id="speed" typeId="speed"/>
-			<channel id="altitude" typeId="altitude"/>
 			<channel id="sensor-used" typeId="sensor-used"/>
 			<channel id="position-accuracy" typeId="position-accuracy"/>
 		</channels>
@@ -75,10 +77,11 @@
 	<channel-group-type id="hardware-group">
 		<label>Hardware</label>
 		<channels>
-			<channel id="battery-level" typeId="battery-level"/>
+			<channel id="battery-level" typeId="system.battery-level"/>
 			<channel id="charging-state" typeId="charging-state"/>
 			<channel id="battery-state" typeId="battery-state"/>
 			<channel id="tracker-state" typeId="tracker-state"/>
+			<channel id="last-contact" typeId="last-contact"/>
 		</channels>
 	</channel-group-type>
 
@@ -94,49 +97,50 @@
 	<channel-group-type id="health-group">
 		<label>Health</label>
 		<channels>
-			<channel id="activity-minutes-active" typeId="activity-minutes-active"/>
-			<channel id="activity-minutes-goal" typeId="activity-minutes-goal"/>
-			<channel id="sleep-minutes-day" typeId="sleep-minutes-day"/>
-			<channel id="sleep-minutes-night" typeId="sleep-minutes-night"/>
-			<channel id="sleep-minutes-calm" typeId="sleep-minutes-calm"/>
+			<channel id="activity-recorded" typeId="activity-recorded"/>
+			<channel id="activity-goal" typeId="activity-goal"/>
+			<channel id="sleep-day" typeId="sleep-day"/>
+			<channel id="sleep-night" typeId="sleep-night"/>
+			<channel id="sleep-calm" typeId="sleep-calm"/>
 			<channel id="resting-heart-rate-status" typeId="resting-heart-rate-status"/>
 			<channel id="resting-respiratory-rate-status" typeId="resting-respiratory-rate-status"/>
 			<channel id="unseen-health-alerts" typeId="unseen-health-alerts"/>
 			<channel id="activity-synced-at" typeId="activity-synced-at"/>
+			<channel id="scratch" typeId="scratch-status"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="dog-group">
+		<label>Dog</label>
+		<channels>
+			<channel id="bark" typeId="bark-status"/>
 		</channels>
 	</channel-group-type>
 
 	<!-- ==================== CHANNEL TYPES: Position ==================== -->
 
-	<channel-type id="location">
-		<item-type>Location</item-type>
-		<label>Location</label>
-		<description>GPS coordinates of the tracker</description>
-		<state readOnly="true"/>
-	</channel-type>
-
 	<channel-type id="last-position-time">
 		<item-type>DateTime</item-type>
 		<label>Last Position Time</label>
 		<description>Time of the most recent position report</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
 		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="speed">
 		<item-type>Number:Speed</item-type>
 		<label>Speed</label>
-		<description>Current movement speed in m/s (null when stationary)</description>
+		<description>Current movement speed (null when stationary)</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Speed</tag>
+		</tags>
 		<state readOnly="true" pattern="%.1f %unit%"/>
 	</channel-type>
 
-	<channel-type id="altitude">
-		<item-type>Number:Length</item-type>
-		<label>Altitude</label>
-		<description>Altitude above sea level</description>
-		<state readOnly="true" pattern="%.0f %unit%"/>
-	</channel-type>
-
-	<channel-type id="sensor-used">
+	<channel-type id="sensor-used" advanced="true">
 		<item-type>String</item-type>
 		<label>Sensor Used</label>
 		<description>Positioning sensor used for the last fix (GPS, KNOWN_WIFI, PHONE)</description>
@@ -152,13 +156,6 @@
 
 	<!-- ==================== CHANNEL TYPES: Hardware ==================== -->
 
-	<channel-type id="battery-level">
-		<item-type>Number</item-type>
-		<label>Battery Level</label>
-		<description>Battery charge level (0–100 %)</description>
-		<state readOnly="true" pattern="%d %%"/>
-	</channel-type>
-
 	<channel-type id="charging-state">
 		<item-type>String</item-type>
 		<label>Charging State</label>
@@ -166,17 +163,27 @@
 		<state readOnly="true"/>
 	</channel-type>
 
-	<channel-type id="battery-state">
+	<channel-type id="battery-state" advanced="true">
 		<item-type>String</item-type>
 		<label>Battery State</label>
 		<description>Battery health state (e.g. FULL, REGULAR, LOW)</description>
 		<state readOnly="true"/>
 	</channel-type>
 
-	<channel-type id="tracker-state">
+	<channel-type id="tracker-state" advanced="true">
 		<item-type>String</item-type>
 		<label>Tracker State</label>
 		<description>Operational state of the tracker (e.g. OPERATIONAL)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="last-contact">
+		<item-type>DateTime</item-type>
+		<label>Last Contact</label>
+		<description>Time of the most recent successful contact with this tracker, via REST poll or real-time channel event</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
 		<state readOnly="true"/>
 	</channel-type>
 
@@ -186,82 +193,129 @@
 		<item-type>Switch</item-type>
 		<label>Buzzer</label>
 		<description>Activates or deactivates the tracker buzzer</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
 	</channel-type>
 
 	<channel-type id="led">
 		<item-type>Switch</item-type>
 		<label>LED</label>
 		<description>Activates or deactivates the tracker LED</description>
+		<tags>
+			<tag>Control</tag>
+			<tag>Light</tag>
+		</tags>
 	</channel-type>
 
 	<channel-type id="live-tracking">
 		<item-type>Switch</item-type>
 		<label>Live Tracking</label>
 		<description>Enables or disables live tracking mode (higher GPS update rate)</description>
+		<tags>
+			<tag>Control</tag>
+		</tags>
 	</channel-type>
 
 	<!-- ==================== CHANNEL TYPES: Health ==================== -->
 
-	<channel-type id="activity-minutes-active">
+	<channel-type id="activity-recorded">
 		<item-type>Number:Time</item-type>
-		<label>Active Minutes</label>
-		<description>Minutes of activity recorded today</description>
+		<label>Active Time</label>
+		<description>Total time of activity recorded today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
 		<state readOnly="true" pattern="%d %unit%"/>
 	</channel-type>
 
-	<channel-type id="activity-minutes-goal">
+	<channel-type id="activity-goal">
 		<item-type>Number:Time</item-type>
 		<label>Activity Goal</label>
-		<description>Daily activity goal in minutes</description>
+		<description>Daily activity time goal</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
 		<state readOnly="true" pattern="%d %unit%"/>
 	</channel-type>
 
-	<channel-type id="sleep-minutes-day">
+	<channel-type id="sleep-day">
 		<item-type>Number:Time</item-type>
 		<label>Daytime Sleep</label>
-		<description>Minutes of daytime sleep today</description>
+		<description>Total time of daytime sleep today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
 		<state readOnly="true" pattern="%d %unit%"/>
 	</channel-type>
 
-	<channel-type id="sleep-minutes-night">
+	<channel-type id="sleep-night">
 		<item-type>Number:Time</item-type>
 		<label>Night Sleep</label>
-		<description>Minutes of night-time sleep today</description>
+		<description>Total time of night-time sleep today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
 		<state readOnly="true" pattern="%d %unit%"/>
 	</channel-type>
 
-	<channel-type id="sleep-minutes-calm">
+	<channel-type id="sleep-calm">
 		<item-type>Number:Time</item-type>
-		<label>Calm Minutes</label>
-		<description>Minutes of calm (resting but not sleep) today</description>
+		<label>Calm Time</label>
+		<description>Total time of calm (resting but not sleep) today</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
 		<state readOnly="true" pattern="%d %unit%"/>
 	</channel-type>
 
 	<channel-type id="resting-heart-rate-status">
 		<item-type>String</item-type>
-		<label>Resting Heart Rate Status</label>
+		<label>Heart Rate Status</label>
 		<description>Heart rate status from health overview (e.g. NORMAL)</description>
 		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="resting-respiratory-rate-status">
 		<item-type>String</item-type>
-		<label>Resting Respiratory Rate Status</label>
+		<label>Respiratory Rate Status</label>
 		<description>Respiratory rate status from health overview (e.g. NORMAL)</description>
 		<state readOnly="true"/>
 	</channel-type>
 
-	<channel-type id="unseen-health-alerts">
+	<channel-type id="unseen-health-alerts" advanced="true">
 		<item-type>Number</item-type>
 		<label>Unseen Health Alerts</label>
 		<description>Number of unseen health alerts</description>
 		<state readOnly="true" pattern="%d"/>
 	</channel-type>
 
-	<channel-type id="activity-synced-at">
+	<channel-type id="activity-synced-at" advanced="true">
 		<item-type>DateTime</item-type>
 		<label>Activity Synced At</label>
 		<description>Time when the activity data was last synced from the tracker</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="bark-status">
+		<item-type>String</item-type>
+		<label>Bark Status</label>
+		<description>Bark detection status from health overview (e.g. INFREQUENT, CALCULATING_BASELINE)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="scratch-status">
+		<item-type>String</item-type>
+		<label>Scratch Status</label>
+		<description>Scratch detection status from health overview (e.g. INFREQUENT, NOT_ENOUGH_DATA_TODAY)</description>
 		<state readOnly="true"/>
 	</channel-type>
 

@@ -10,7 +10,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.tractive.internal;
+package org.openhab.binding.tractive.internal.config;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
@@ -21,8 +21,5 @@ import org.eclipse.jdt.annotation.NonNullByDefault;
  * @author Erik De Boeck - Initial contribution
  */
 @NonNullByDefault
-public class TractiveDog6Configuration {
-    public String trackerId = "";
-    public String trackableId = "";
-    public int refreshInterval = 30;
+public class TractiveDog6Configuration extends TractiveTrackerConfiguration {
 }

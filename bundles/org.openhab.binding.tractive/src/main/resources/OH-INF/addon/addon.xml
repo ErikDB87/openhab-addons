@@ -5,6 +5,7 @@
 
 	<type>binding</type>
 	<name>Tractive Binding</name>
-	<description>Integrates Tractive GPS pet trackers with openHAB. Provides real-time location, battery status, health and activity data, and remote commands (buzzer, LED, live tracking) via the Tractive cloud API.</description>
+	<description>Integrates Tractive GPS pet trackers with openHAB. Provides real-time location, battery status, health and
+		activity data, and remote commands (buzzer, LED, live tracking) via the unofficial Tractive cloud API.</description>
 
 </addon:addon>

@@ -1,95 +1,219 @@
 # Tractive Binding
 
-_Give some details about what this binding is meant for - a protocol, system, specific device._
+This binding integrates [Tractive](https://tractive.com) GPS pet trackers into openHAB.
+It reports the tracker's location, battery, and health data in real time and lets you activate the buzzer, LED, and live tracking from openHAB rules or the UI.
 
-_If possible, provide some resources like pictures (only PNG is supported currently), a video, etc. to give an impression of what can be done with this binding._
-_You can place such resources into a `doc` folder next to this README.md._
-
-_Put each sentence in a separate line to improve readability of diffs._
+> **Important:** This binding uses Tractive's unofficial, undocumented HTTP API.
+Tractive has not published a public API and makes no guarantee of stability or availability.
+The binding may stop working without warning if Tractive changes its backend.
 
 ## Supported Things
 
-_Please describe the different supported things / devices including their ThingTypeUID within this section._
-_Which different types are supported, which models were tested etc.?_
-_Note that it is planned to generate some part of this based on the XML files within ```src/main/resources/OH-INF/thing``` of your binding._
+- `account` (Bridge) — one per Tractive account; handles authentication and the real-time event stream.
+- `dog-6` — a Tractive Dog 6 GPS tracker linked to a dog.
 
-- `bridge`: Short description of the Bridge, if any
-- `sample`: Short description of the Thing with the ThingTypeUID `sample`
+Not all Tractive tracker models are currently supported.
+If you own a model that is not listed here, please contact the binding maintainer so support can be added.
+
+## Supported Tracker Types
+
+### Tractive Dog 6 (`dog-6`)
+
+The Dog 6 is a GPS tracker designed for dogs.
+It supports GPS and Wi-Fi positioning, real-time location updates, remote commands, and Tractive's health monitoring features.
+
+Capabilities exposed by this binding:
+
+- **Location** — latitude, longitude, altitude, positioning sensor type (GPS, Wi-Fi, phone-assisted), and estimated accuracy
+- **Speed** — movement speed
+- **Battery** — charge level (0–100 %), charging state, and battery health state
+- **Tracker state** — operational state as reported by the tracker hardware
+- **Activity** — active time today and the configured daily goal
+- **Sleep** — daytime sleep, night sleep, and calm time
+- **Health monitoring** — resting heart rate status, resting respiratory rate status, bark frequency, and scratch frequency
+- **Health alerts** — count of unseen alerts in the Tractive app
+- **Historical positions** — fetch a time-windowed GPS track via a rule action
+- **Buzzer** — remotely activate an audible tone
+- **LED** — remotely activate the LED light on the tracker
+- **Live tracking** — enable high-frequency location updates on demand
+- **Last contact** — timestamp of the most recent successful contact with the tracker, be it via REST poll or real-time event
 
 ## Discovery
 
-_Describe the available auto-discovery features here._
-_Mention for what it works and what needs to be kept in mind when using it._
+The `account` bridge needs to be created manually.
+Once it is configured and online, all trackers that are linked to that account are automatically discovered.
+**To add another tracker later, you need to manually scan to get them discovered.**
 
-## Binding Configuration
+The binding queries the Tractive account and announces each linked tracker as an inbox entry of the appropriate Thing type, pre-filled with its `trackerId` and `trackedPetId`.
 
-_If your binding requires or supports general configuration settings, please create a folder ```cfg``` and place the configuration file ```<bindingId>.cfg``` inside it._
-_In this section, you should link to this file and provide some information about the options._
-_The file could e.g. look like:_
+## Bridge Configuration
 
-```
-# Configuration for the Tractive Binding
-#
-# Default secret key for the pairing of the Tractive Thing.
-# It has to be between 10-40 (alphanumeric) characters.
-# This may be changed by the user for security reasons.
-secret=openHABSecret
-```
+### `account` Bridge
 
-_Note that it is planned to generate some part of this based on the information that is available within ```src/main/resources/OH-INF/binding``` of your binding._
+| Parameter  | Type | Required | Description                            |
+| ---------- | ---- | -------- | -------------------------------------- |
+| `email`    | text | yes      | E-mail address of the Tractive account |
+| `password` | text | yes      | Password of the Tractive account       |
 
-_If your binding does not offer any generic configurations, you can remove this section completely._
+The bridge authenticates on startup and refreshes the access token automatically.
+It also maintains a persistent real-time event stream that pushes position and health updates to all linked Things.
 
 ## Thing Configuration
 
-_Describe what is needed to manually configure a thing, either through the UI or via a thing-file._
-_This should be mainly about its mandatory and optional configuration parameters._
+### `dog-6` Thing
 
-_Note that it is planned to generate some part of this based on the XML files within ```src/main/resources/OH-INF/thing``` of your binding._
+| Parameter         | Type    | Required | Default | Description                                                                            |
+| ----------------- | ------- | -------- | ------- | -------------------------------------------------------------------------------------- |
+| `trackerId`       | text    | yes      |         | 8-character tracker hardware ID (e.g. `HBDYUFSC`)                                      |
+| `trackedPetId`    | text    | yes      |         | ID of the pet ("trackable object"), linked to this tracker                             |
+| `refreshInterval` | integer | no       | 0       | REST polling interval in seconds; set to 0 to rely solely on real-time channel updates |
 
-### `sample` Thing Configuration
-
-| Name            | Type    | Description                           | Default | Required | Advanced |
-|-----------------|---------|---------------------------------------|---------|----------|----------|
-| hostname        | text    | Hostname or IP address of the device  | N/A     | yes      | no       |
-| password        | text    | Password to access the device         | N/A     | yes      | no       |
-| refreshInterval | integer | Interval the device is polled in sec. | 600     | no       | yes      |
+Both `trackerId` and `trackedPetId` are filled in automatically when the Thing is created via discovery.
 
 ## Channels
 
-_Here you should provide information about available channel types, what their meaning is and how they can be used._
+### Group `position`
 
-_Note that it is planned to generate some part of this based on the XML files within ```src/main/resources/OH-INF/thing``` of your binding._
+| Channel ID                    | Type          | R/W | Description                                                              |
+| ----------------------------- | ------------- | --- | ------------------------------------------------------------------------ |
+| `position#location`           | Location      | R   | Current location (latitude, longitude, altitude)                         |
+| `position#last-position-time` | DateTime      | R   | Timestamp of the last position report                                    |
+| `position#speed`              | Number:Speed  | R   | Speed at the last position report; `null` when the tracker is stationary |
+| `position#sensor-used`        | String        | R   | Positioning sensor: `GPS`, `KNOWN_WIFI`, or `PHONE`                      |
+| `position#position-accuracy`  | Number:Length | R   | Estimated position accuracy radius                                       |
 
-| Channel | Type   | Read/Write | Description                 |
-|---------|--------|------------|-----------------------------|
-| control | Switch | RW         | This is the control channel |
+### Group `hardware`
+
+| Channel ID                | Type     | R/W | Description                                                                                               |
+| ------------------------- | -------- | --- | --------------------------------------------------------------------------------------------------------- |
+| `hardware#battery-level`  | Number   | R   | Battery charge level, 0–100 %                                                                             |
+| `hardware#charging-state` | String   | R   | Charging state reported by the tracker                                                                    |
+| `hardware#battery-state`  | String   | R   | Battery health state                                                                                      |
+| `hardware#tracker-state`  | String   | R   | Operational state of the tracker hardware                                                                 |
+| `hardware#last-contact`   | DateTime | R   | Timestamp of the most recent successful contact with the tracker (be it via REST poll or real-time event) |
+
+### Group `commands`
+
+| Channel ID               | Type   | R/W | Description                                              |
+| ------------------------ | ------ | --- | -------------------------------------------------------- |
+| `commands#buzzer`        | Switch | W   | Activate (`ON`) or deactivate (`OFF`) the audible buzzer |
+| `commands#led`           | Switch | W   | Activate (`ON`) or deactivate (`OFF`) the LED light      |
+| `commands#live-tracking` | Switch | W   | Enable or disable high-frequency live tracking           |
+
+> **Note 1:** Tractive commands are queued in the cloud.
+> There may be a delay between sending a command and the tracker responding physically.
+>
+> **Note 2:** The displayed Item state reflects the last command sent, not a confirmed readback from the tracker — the binding currently can't verify whether a command actually completed on the physical device.
+
+### Group `health`
+
+| Channel ID                               | Type        | R/W | Description                                                          |
+| ---------------------------------------- | ----------- | --- | -------------------------------------------------------------------- |
+| `health#activity-recorded`               | Number:Time | R   | Total time of activity recorded today                                |
+| `health#activity-goal`                   | Number:Time | R   | Daily activity time goal                                             |
+| `health#sleep-day`                       | Number:Time | R   | Total time of daytime sleep today                                    |
+| `health#sleep-night`                     | Number:Time | R   | Total time of night-time sleep today                                 |
+| `health#sleep-calm`                      | Number:Time | R   | Total time of calm (resting but not sleep) today                     |
+| `health#resting-heart-rate-status`       | String      | R   | Resting heart rate status, e.g. `NORMAL`                             |
+| `health#resting-respiratory-rate-status` | String      | R   | Resting respiratory rate status, e.g. `NORMAL`                       |
+| `health#unseen-health-alerts`            | Number      | R   | Number of unseen health alerts in the Tractive app                   |
+| `health#activity-synced-at`              | DateTime    | R   | Timestamp of the last health data sync from the tracker              |
+| `health#scratch`                         | String      | R   | Scratch frequency status, e.g. `INFREQUENT`, `NOT_ENOUGH_DATA_TODAY` |
+
+### Group `dog`
+
+| Channel ID | Type   | R/W | Description                                                      |
+| ---------- | ------ | --- | ---------------------------------------------------------------- |
+| `dog#bark` | String | R   | Bark frequency status, e.g. `INFREQUENT`, `CALCULATING_BASELINE` |
+
+## Thing Actions
+
+The `dog-6` Thing exposes four actions for use in rules:
+
+| Action                                               | Description                                                                                                  |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `refreshPosition()`                                  | Triggers an immediate refresh of the "Position" channel group, outside the regular polling schedule          |
+| `refreshHealthOverview()`                            | Triggers an immediate refresh of the "Health" and "Dog" channel groups, outside the regular polling schedule |
+| `refreshHardware()`                                  | Triggers an immediate refresh of the "Hardware" channel group, outside the regular polling schedule          |
+| `getPositions(ZonedDateTime from, ZonedDateTime to)` | Fetches historical tracker positions within a time window                                                    |
+
+### `getPositions`
+
+Returns a `Map<String, Object>` with a single key `"positions"` whose value is a JSON array string.
+Each element corresponds to one position fix:
+
+```json
+[{"time": 1784832952, "latlong": [51.20, 4.71], "alt": 9, "speed": 0.0, "course": 0, "pos_uncertainty": 10, "sensor_used": "GPS"}, ...]
+```
+
+| Field             | Type             | Description                                                                                                        |
+| ----------------- | ---------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `time`            | integer          | Unix epoch of the position fix (seconds)                                                                           |
+| `latlong`         | array            | `[latitude, longitude]` in decimal degrees                                                                         |
+| `alt`             | integer          | Altitude in metres                                                                                                 |
+| `speed`           | number or `null` | Speed in m/s; `null` when the tracker is stationary                                                                |
+| `course`          | number           | Probably course/heading value as returned by the API (unit not documented by Tractive), but seems to always be `0` |
+| `pos_uncertainty` | number           | Estimated position uncertainty in metres                                                                           |
+| `sensor_used`     | string           | `GPS`, `KNOWN_WIFI`, or `PHONE`                                                                                    |
+
+The map is empty if the bridge is unavailable or the request fails.
 
 ## Full Example
 
-_Provide a full usage example based on textual configuration files._
-_*.things, *.items examples are mandatory as textual configuration is well used by many users._
-_*.sitemap examples are optional._
-
-### Thing Configuration
+### `tractive.things`
 
 ```java
-Example thing configuration goes here.
+Bridge tractive:account:gert "Tractive Account" [email="gert@hetdorp.vl", password="marleneke"] {
+    Thing dog-6 samson "Samson (Tractive)" [trackerId="HBDYUFSC", trackedPetId="9c7a4e2d1f6b8035c2a9d0ef", refreshInterval=0]
+}
 ```
 
-### Item Configuration
+### `tractive.items`
 
 ```java
-Example item configuration goes here.
+Location      samson_Location         "Location"                          ["GeoLocation", "Measurement"] { channel="tractive:dog-6:gert:samson:position#location" }
+DateTime      samson_LastPositionTime "Last Position Update"              ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:position#last-position-time" }
+Number:Speed  samson_Speed            "Speed"                             ["Measurement", "Speed"]       { channel="tractive:dog-6:gert:samson:position#speed", unit="km/h", stateDescription=""[pattern="%.1f %unit%"] }
+String        samson_SensorUsed       "Sensor"                            ["Point"]                      { channel="tractive:dog-6:gert:samson:position#sensor-used" }
+Number:Length samson_Accuracy         "Accuracy"                          ["Point"]                      { channel="tractive:dog-6:gert:samson:position#position-accuracy" }
+
+Number        samson_BatteryLevel     "Battery"                 <Battery> ["Energy", "Measurement"]      { channel="tractive:dog-6:gert:samson:hardware#battery-level" }
+String        samson_ChargingState    "Charging State"                    ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#charging-state" }
+String        samson_BatteryState     "Battery State"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#battery-state" }
+String        samson_TrackerState     "Tracker State"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#tracker-state" }
+DateTime      samson_LastContact      "Last Contact"                      ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:hardware#last-contact" }
+
+Switch        samson_Buzzer           "Buzzer"                            ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#buzzer" }
+Switch        samson_LED              "LED"                               ["Control", "Light"]           { channel="tractive:dog-6:gert:samson:commands#led" }
+Switch        samson_LiveTracking     "Live Tracking"                     ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#live-tracking" }
+
+Number:Time   samson_ActiveTime       "Active"                            ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-recorded", unit="s", stateDescription=""[pattern="%d %unit%"] }
+Number:Time   samson_ActivityGoal     "Goal"                              ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-goal", unit="s", stateDescription=""[pattern="%d %unit%"] }
+Number:Time   samson_SleepDay         "Day Sleep"                         ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-day", unit="s", stateDescription=""[pattern="%d %unit%"] }
+Number:Time   samson_SleepNight       "Night Sleep"                       ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-night", unit="s", stateDescription=""[pattern="%d %unit%"] }
+Number:Time   samson_Calm             "Calm"                              ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-calm", unit="s", stateDescription=""[pattern="%d %unit%"] }
+String        samson_HeartRate        "Heart Rate Status"                 ["Point"]                      { channel="tractive:dog-6:gert:samson:health#resting-heart-rate-status" }
+String        samson_RespRate         "Respiratory Rate Status"           ["Point"]                      { channel="tractive:dog-6:gert:samson:health#resting-respiratory-rate-status" }
+Number        samson_HealthAlerts     "Health Alerts"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:health#unseen-health-alerts" }
+DateTime      samson_ActivitySyncedAt "Activity Synced At"                ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:health#activity-synced-at" }
+String        samson_Bark             "Bark Status"                       ["Point"]                      { channel="tractive:dog-6:gert:samson:dog#bark" }
+String        samson_Scratch          "Scratch Status"                    ["Point"]                      { channel="tractive:dog-6:gert:samson:health#scratch" }
 ```
 
-### Sitemap Configuration
+### `tractive.rules`
 
-```perl
-Optional Sitemap configuration goes here.
-Remove this section, if not needed.
+```java
+import org.openhab.binding.tractive.internal.action.TractiveDog6Actions
+
+rule "Log Samson's daily position history"
+when
+    Time cron "0 0 0 * * ?"
+then
+    val actions = getActions("tractive", "tractive:dog-6:gert:samson") as TractiveDog6Actions
+    val to = now
+    val from = to.minusDays(1)
+    val result = actions.getPositions(from, to)
+    val json = result.get("positions")
+    logInfo("Tractive", "Samson's positions for the last 24 hours: " + json)
+end
 ```
-
-## Any custom content here!
-
-_Feel free to add additional sections for whatever you think should also be mentioned about your binding!_

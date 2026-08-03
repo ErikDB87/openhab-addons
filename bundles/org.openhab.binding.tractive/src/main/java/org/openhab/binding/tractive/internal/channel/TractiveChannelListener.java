@@ -10,7 +10,7 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.tractive.internal;
+package org.openhab.binding.tractive.internal.channel;
 
 import static org.openhab.binding.tractive.internal.TractiveBindingConstants.*;
 
@@ -18,8 +18,11 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.InterruptedIOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
@@ -31,14 +34,14 @@ import org.eclipse.jetty.http.HttpMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.google.gson.Gson;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.google.gson.JsonSyntaxException;
 
 /**
  * Manages the Tractive real-time NDJSON channel connection.
- * Call {@link #run} from a background thread; it blocks until the connection drops
- * or {@link #stop} is called.
+ * Call {@link #run} from a background thread; it blocks until the connection drops.
  *
  * @author Erik De Boeck - Initial contribution
  */
@@ -49,52 +52,51 @@ public class TractiveChannelListener {
     private static final long CONNECT_TIMEOUT_S = 10;
 
     private final Logger logger = LoggerFactory.getLogger(TractiveChannelListener.class);
-    private final Gson gson;
     private final Consumer<JsonObject> eventConsumer;
     private final AtomicLong lastKeepAliveMs = new AtomicLong(System.currentTimeMillis());
-    private volatile boolean stopped;
 
-    public TractiveChannelListener(Gson gson, Consumer<JsonObject> eventConsumer) {
-        this.gson = gson;
+    /**
+     * Creates a channel listener that parses NDJSON lines and forwards data events to the given consumer.
+     */
+    public TractiveChannelListener(Consumer<JsonObject> eventConsumer) {
         this.eventConsumer = eventConsumer;
-    }
-
-    /** Signals the read loop to exit cleanly after the next line. */
-    public void stop() {
-        stopped = true;
     }
 
     /**
      * Connects to the Tractive real-time channel and reads events until the connection
-     * drops or {@link #stop()} is called. Throws on any error so the caller can reconnect.
+     * drops. Throws on any error so the caller can reconnect.
      */
-    public void run(HttpClient httpClient, String accessToken, String userId) throws Exception {
-        stopped = false;
+    public void run(HttpClient httpClient, String accessToken, String userId) throws IOException, InterruptedException {
         lastKeepAliveMs.set(System.currentTimeMillis());
 
         InputStreamResponseListener streamListener = new InputStreamResponseListener();
-        httpClient.newRequest(CHANNEL_URL)
-                .method(HttpMethod.POST)
-                .header("x-tractive-client", API_CLIENT_ID)
-                .header("x-tractive-user", userId)
-                .header("authorization", "Bearer " + accessToken)
-                .header("content-type", "application/json;charset=UTF-8")
-                .timeout(0, TimeUnit.SECONDS)
-                .idleTimeout(KEEP_ALIVE_TIMEOUT_MS + 5_000, TimeUnit.MILLISECONDS)
-                .send(streamListener);
+        httpClient.newRequest(CHANNEL_URL).method(HttpMethod.POST).header(HEADER_TRACTIVE_CLIENT, API_CLIENT_ID)
+                .header(HEADER_TRACTIVE_USER, userId).header(HEADER_AUTHORIZATION, AUTH_BEARER_PREFIX + accessToken)
+                .header(HEADER_CONTENT_TYPE, CONTENT_TYPE_JSON).timeout(0, TimeUnit.SECONDS)
+                .idleTimeout(KEEP_ALIVE_TIMEOUT_MS + 5_000, TimeUnit.MILLISECONDS).send(streamListener);
 
-        Response response = streamListener.get(CONNECT_TIMEOUT_S, TimeUnit.SECONDS);
+        Response response;
+        try {
+            response = streamListener.get(CONNECT_TIMEOUT_S, TimeUnit.SECONDS);
+        } catch (TimeoutException e) {
+            InterruptedIOException ioe = new InterruptedIOException("Channel connect timed out");
+            ioe.initCause(e);
+            throw ioe;
+        } catch (ExecutionException e) {
+            throw new IOException("Channel connect failed: " + e.getMessage(), e);
+        }
         if (response.getStatus() != 200) {
             throw new IOException("Channel connect failed with HTTP " + response.getStatus());
         }
+        logger.trace("Channel connected");
 
         InputStream is = streamListener.getInputStream();
         try (BufferedReader reader = new BufferedReader(new InputStreamReader(is, StandardCharsets.UTF_8))) {
             String line;
-            while (!stopped && (line = reader.readLine()) != null) {
+            while ((line = reader.readLine()) != null) {
                 processLine(line.trim());
                 if (System.currentTimeMillis() - lastKeepAliveMs.get() > KEEP_ALIVE_TIMEOUT_MS) {
-                    throw new IOException("Keep-alive timeout; reconnecting");
+                    throw new TractiveKeepAliveTimeoutException("Keep-alive timeout; reconnecting");
                 }
             }
         }
@@ -104,17 +106,22 @@ public class TractiveChannelListener {
         if (line.isEmpty()) {
             return;
         }
+        logger.trace("Channel line: {}", line);
         try {
-            JsonObject json = gson.fromJson(line, JsonObject.class);
-            if (json == null || !json.has("message")) {
+            JsonElement parsed = JsonParser.parseString(line);
+            if (!parsed.isJsonObject()) {
                 return;
             }
-            String message = json.get("message").getAsString();
-            if ("keep-alive".equals(message)) {
+            JsonObject json = parsed.getAsJsonObject();
+            if (!json.has(FIELD_MESSAGE)) {
+                return;
+            }
+            String message = json.get(FIELD_MESSAGE).getAsString();
+            if (MESSAGE_KEEP_ALIVE.equals(message)) {
                 lastKeepAliveMs.set(System.currentTimeMillis());
                 return;
             }
-            if ("handshake".equals(message)) {
+            if (MESSAGE_HANDSHAKE.equals(message)) {
                 return;
             }
             eventConsumer.accept(json);

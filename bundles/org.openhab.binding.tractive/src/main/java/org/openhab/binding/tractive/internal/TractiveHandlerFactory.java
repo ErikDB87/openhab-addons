@@ -19,6 +19,8 @@ import java.util.Set;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
 import org.eclipse.jetty.client.HttpClient;
+import org.openhab.binding.tractive.internal.handler.TractiveAccountHandler;
+import org.openhab.binding.tractive.internal.handler.TractiveDog6Handler;
 import org.openhab.core.io.net.http.HttpClientFactory;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.Thing;
@@ -44,6 +46,9 @@ public class TractiveHandlerFactory extends BaseThingHandlerFactory {
 
     private final HttpClient httpClient;
 
+    /**
+     * Creates the handler factory, retrieving the shared openHAB HTTP client via OSGi.
+     */
     @Activate
     public TractiveHandlerFactory(@Reference HttpClientFactory httpClientFactory) {
         this.httpClient = httpClientFactory.getCommonHttpClient();

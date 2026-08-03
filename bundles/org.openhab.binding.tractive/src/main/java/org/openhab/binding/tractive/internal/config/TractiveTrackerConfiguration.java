@@ -10,22 +10,19 @@
  *
  * SPDX-License-Identifier: EPL-2.0
  */
-package org.openhab.binding.tractive.internal;
+package org.openhab.binding.tractive.internal.config;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 
 /**
- * The {@link TractiveConfiguration} class contains fields mapping thing configuration parameters.
+ * The {@link TractiveTrackerConfiguration} class contains fields mapping the
+ * generic configuration parameters of a Tractive tracker thing.
  *
  * @author Erik De Boeck - Initial contribution
  */
 @NonNullByDefault
-public class TractiveConfiguration {
-
-    /**
-     * Sample configuration parameters. Replace with your own.
-     */
-    public String hostname = "";
-    public String password = "";
-    public int refreshInterval = 600;
+public class TractiveTrackerConfiguration {
+    public String trackerId = "";
+    public String trackedPetId = "";
+    public int refreshInterval = 0;
 }
