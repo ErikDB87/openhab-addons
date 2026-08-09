@@ -257,8 +257,9 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
 
     /**
      * Extracts the target ID from the event. Checks, in order: the "_id" field (REST-shaped
-     * envelopes), "tracker_id" ({@code tracker_status} messages), nested "content.petId"
-     * ({@code health_overview} messages), then falls back to parsing "message[ID]".
+     * envelopes), "tracker_id" ({@code tracker_status} messages), "device_id" ({@code start_failed}/
+     * {@code command_confirmed} messages), nested "content.petId" ({@code health_overview} messages),
+     * then falls back to parsing "message[ID]".
      */
     private String resolveTargetId(JsonObject event, String messageType) {
         if (event.has(FIELD_ID)) {
@@ -266,6 +267,9 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         }
         if (event.has(FIELD_TRACKER_ID)) {
             return event.get(FIELD_TRACKER_ID).getAsString();
+        }
+        if (event.has(FIELD_DEVICE_ID)) {
+            return event.get(FIELD_DEVICE_ID).getAsString();
         }
         if (event.has(FIELD_CONTENT) && event.get(FIELD_CONTENT).isJsonObject()) {
             JsonObject content = event.get(FIELD_CONTENT).getAsJsonObject();
@@ -280,8 +284,6 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         }
         return "";
     }
-
-    // ---- Public API for child handlers ----
 
     /**
      * Registers a listener to receive real-time channel events for its tracker and pet IDs.
@@ -364,11 +366,11 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         this.discoveryService = service;
     }
 
-    // ---- BaseThingHandler overrides ----
-
+    /**
+     * No-op: the account bridge has no channels of its own.
+     */
     @Override
     public void handleCommand(ChannelUID channelUID, Command command) {
-        // The account bridge has no channels of its own.
     }
 
     @Override

@@ -96,14 +96,17 @@ Both `trackerId` and `trackedPetId` are filled in automatically when the Thing i
 
 | Channel ID               | Type   | R/W | Description                                              |
 | ------------------------ | ------ | --- | -------------------------------------------------------- |
-| `commands#buzzer`        | Switch | W   | Activate (`ON`) or deactivate (`OFF`) the audible buzzer |
-| `commands#led`           | Switch | W   | Activate (`ON`) or deactivate (`OFF`) the LED light      |
-| `commands#live-tracking` | Switch | W   | Enable or disable high-frequency live tracking           |
+| `commands#buzzer`        | Switch | R/W | Activate (`ON`) or deactivate (`OFF`) the audible buzzer |
+| `commands#led`           | Switch | R/W | Activate (`ON`) or deactivate (`OFF`) the LED light      |
+| `commands#live-tracking` | Switch | R/W | Enable or disable high-frequency live tracking           |
 
 > **Note 1:** Tractive commands are queued in the cloud.
 > There may be a delay between sending a command and the tracker responding physically.
 >
-> **Note 2:** The displayed Item state reflects the last command sent, not a confirmed readback from the tracker — the binding currently can't verify whether a command actually completed on the physical device.
+> **Note 2:** The Item state reflects the last _confirmed_ device state, pushed asynchronously over the real-time channel — not the immediate response to the command itself, which is not reliable (see Note 1).
+> If Tractive reports that a command timed out before the tracker ever executed it, the binding forces the Item back to `OFF`; this is confirmed correct for a failed _activation_ (turning the feature on), but a failed _deactivation_ would also force the Item to `OFF`, which could be wrong if the device is actually still on — the failure message doesn't say which direction failed, and that case is unverified.
+> If no resolution (success or failure) ever arrives at all, the Item is left showing openHAB's initial optimistic guess indefinitely.
+> This note still needs work!
 
 ### Group `health`
 
@@ -184,7 +187,7 @@ String        samson_TrackerState     "Tracker State"                     ["Poin
 DateTime      samson_LastContact      "Last Contact"                      ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:hardware#last-contact" }
 
 Switch        samson_Buzzer           "Buzzer"                            ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#buzzer" }
-Switch        samson_LED              "LED"                               ["Control", "Light"]           { channel="tractive:dog-6:gert:samson:commands#led" }
+Switch        samson_LED              "LED"                     <light>   ["Control", "Light"]           { channel="tractive:dog-6:gert:samson:commands#led" }
 Switch        samson_LiveTracking     "Live Tracking"                     ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#live-tracking" }
 
 Number:Time   samson_ActiveTime       "Active"                            ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-recorded", unit="s", stateDescription=""[pattern="%d %unit%"] }

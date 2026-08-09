@@ -4,8 +4,6 @@
 	xmlns:thing="https://openhab.org/schemas/thing-description/v1.0.0"
 	xsi:schemaLocation="https://openhab.org/schemas/thing-description/v1.0.0 https://openhab.org/schemas/thing-description-1.0.0.xsd">
 
-	<!-- ==================== BRIDGE: Account ==================== -->
-
 	<bridge-type id="account">
 		<label>Tractive Account</label>
 		<description>Connects to the Tractive cloud using your account credentials. All tracker things require this bridge.</description>
@@ -23,8 +21,6 @@
 			</parameter>
 		</config-description>
 	</bridge-type>
-
-	<!-- ==================== THING: Dog 6 Tracker ==================== -->
 
 	<thing-type id="dog-6">
 		<supported-bridge-type-refs>
@@ -60,8 +56,6 @@
 			</parameter>
 		</config-description>
 	</thing-type>
-
-	<!-- ==================== CHANNEL GROUPS ==================== -->
 
 	<channel-group-type id="position-group">
 		<label>Position</label>
@@ -117,8 +111,6 @@
 		</channels>
 	</channel-group-type>
 
-	<!-- ==================== CHANNEL TYPES: Position ==================== -->
-
 	<channel-type id="last-position-time">
 		<item-type>DateTime</item-type>
 		<label>Last Position Time</label>
@@ -154,8 +146,6 @@
 		<state readOnly="true" pattern="%.0f %unit%"/>
 	</channel-type>
 
-	<!-- ==================== CHANNEL TYPES: Hardware ==================== -->
-
 	<channel-type id="charging-state">
 		<item-type>String</item-type>
 		<label>Charging State</label>
@@ -187,8 +177,6 @@
 		<state readOnly="true"/>
 	</channel-type>
 
-	<!-- ==================== CHANNEL TYPES: Commands ==================== -->
-
 	<channel-type id="buzzer">
 		<item-type>Switch</item-type>
 		<label>Buzzer</label>
@@ -216,8 +204,6 @@
 			<tag>Control</tag>
 		</tags>
 	</channel-type>
-
-	<!-- ==================== CHANNEL TYPES: Health ==================== -->
 
 	<channel-type id="activity-recorded">
 		<item-type>Number:Time</item-type>

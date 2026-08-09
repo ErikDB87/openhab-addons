@@ -18,8 +18,11 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
@@ -35,6 +38,7 @@ import org.openhab.binding.tractive.internal.util.TractiveRetryUtil;
 import org.openhab.binding.tractive.internal.util.TractiveTaskTracker;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.DecimalType;
+import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.library.types.PointType;
 import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
@@ -79,6 +83,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     private final PollGuard positionReportGuard = new PollGuard(MIN_POLL_INTERVAL_MS);
     private final PollGuard healthOverviewGuard = new PollGuard(MIN_POLL_INTERVAL_MS);
 
+    private volatile boolean powerSaving = false;
+    private final Map<String, ScheduledFuture<?>> autoOffTasks = new ConcurrentHashMap<>();
+
     /**
      * Creates a new tracker handler for the given thing.
      */
@@ -96,6 +103,11 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         logger.trace("Channel event: messageType={}", messageType);
         switch (messageType) {
             case MESSAGE_TRACKER_STATUS:
+                updatePowerSavingFlag(event, FIELD_TRACKER_STATE_REASON);
+                applyControlState(CHANNEL_LED, event, COMMAND_LED_CONTROL);
+                applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
+                scheduleOrCancelBuzzerAutoOff(event);
+                applyControlState(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
                 updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE);
                 updateStringChannel(CHANNEL_CHARGING_STATE, event, FIELD_CHARGING_STATE);
                 updateStringChannel(CHANNEL_BATTERY_STATE, event, FIELD_BATTERY_STATE);
@@ -111,8 +123,15 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                     applyHealthOverview(event.get(FIELD_CONTENT).getAsJsonObject());
                 }
                 break;
+            case MESSAGE_START_FAILED:
+                applyStartFailed(event);
+                break;
+            case MESSAGE_COMMAND_CONFIRMED:
+            case MESSAGE_ACTIVITY_DATA_UPDATED:
+                logger.trace("Ignoring known no-op channel event message={}", messageType);
+                break;
             default:
-                logger.debug("Ignoring channel event message={}", messageType);
+                logger.debug("Ignoring unrecognized channel event message={}", messageType);
                 break;
         }
         if (isLinked(CHANNEL_LAST_CONTACT)) {
@@ -314,6 +333,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             updateStringChannel(CHANNEL_TRACKER_STATE, json, FIELD_TRACKER_STATE);
             updateStringChannel(CHANNEL_CHARGING_STATE, json, FIELD_CHARGING_STATE);
             updateStringChannel(CHANNEL_BATTERY_STATE, json, FIELD_BATTERY_STATE);
+            updatePowerSavingFlag(json, FIELD_STATE_REASON);
         } finally {
             trackerDetailsGuard.release();
         }
@@ -448,6 +468,128 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (bridge != null) {
             pollPositionReport(bridge);
         }
+    }
+
+    /**
+     * Updates a Switch channel from a nested tracker_status control object's "active" field
+     * (led_control/buzzer_control/live_tracking) — the only confirmed source of real device
+     * state for the three command switches; the synchronous command response is not reliable.
+     */
+    protected void applyControlState(String channelId, JsonObject event, String field) {
+        if (!isLinked(channelId) || !event.has(field) || !event.get(field).isJsonObject()) {
+            return;
+        }
+        JsonElement active = event.get(field).getAsJsonObject().get(FIELD_ACTIVE);
+        if (active != null && !active.isJsonNull()) {
+            updateState(channelId, OnOffType.from(active.getAsBoolean()));
+        }
+    }
+
+    /**
+     * Reacts to an explicit command-timeout push from Tractive's cloud by forcing the relevant
+     * command switch back to OFF — confirmed only for the "an ON attempt timed out"; the OFF direction doesn't report
+     * such a time-out.
+     */
+    protected void applyStartFailed(JsonObject event) {
+        if (!event.has(FIELD_COMMAND_TYPE)) {
+            return;
+        }
+        String channelId = switch (event.get(FIELD_COMMAND_TYPE).getAsString()) {
+            case VALUE_COMMAND_TYPE_LED -> CHANNEL_LED;
+            case VALUE_COMMAND_TYPE_BUZZER -> CHANNEL_BUZZER;
+            case VALUE_COMMAND_TYPE_LIVE_TRACKING -> CHANNEL_LIVE_TRACKING;
+            default -> null;
+        };
+        if (channelId == null) {
+            return;
+        }
+        if (CHANNEL_BUZZER.equals(channelId)) {
+            cancelBuzzerAutoOffTask();
+        }
+        String reason = event.has(FIELD_CANCELLATION_REASON) ? event.get(FIELD_CANCELLATION_REASON).getAsString()
+                : "unknown";
+        logger.info("Command on {} failed to take effect: {}", channelId, reason);
+        if (isLinked(channelId)) {
+            updateState(channelId, OnOffType.OFF);
+        }
+    }
+
+    /**
+     * Updates the internally-tracked dormancy flag from a state_reason/tracker_state_reason field --
+     * REST calls it {@code state_reason}, the real-time channel calls it {@code tracker_state_reason};
+     * same meaning, different key. Backs the auto-off prediction's dormancy gate (see
+     * {@link #scheduleOrCancelAutoOff}) -- absence or null means "no special reason", i.e. awake,
+     * matching every confirmed capture so far.
+     */
+    private void updatePowerSavingFlag(JsonObject json, String field) {
+        JsonElement el = json.get(field);
+        powerSaving = el != null && !el.isJsonNull() && VALUE_STATE_REASON_POWER_SAVING.equals(el.getAsString());
+    }
+
+    /**
+     * Schedules (or cancels/reschedules) a locally-predicted "OFF" state for a command switch
+     * channel, timed off the tracker's own {@code remaining} countdown from a confirmed
+     * {@code tracker_status} push. Shared mechanics for any channel whose control object carries a device-driven
+     * auto-off timer -- confirmed so far only for the buzzer minute hardware timeout, consistent across every capture);
+     * LED's {@code timeout} field has shown both {@code 300} and {@code 3600} with no settled explanation yet, so it is
+     * deliberately not wired up here until that's resolved. Each validated channel gets its own thin wrapper below
+     * rather than being called directly with an arbitrary channel/field pair, so adding a channel here is always a
+     * deliberate, visible decision, not an incidental one. While the tracker is awake, the real {@code tracker_status}
+     * confirmation arrives promptly on its own, so the prediction only actually pushes state if the tracker is still
+     * believed dormant at the moment the countdown elapses, since the tracker can go dormant partway through an
+     * already-running countdown. Every fresh confirmation cancels and (if still active) reschedules the prediction, so
+     * a renewal extends it exactly like it extends the real device timer.
+     */
+    private void scheduleOrCancelAutoOff(String channelId, JsonObject event, String field) {
+        if (!isLinked(channelId) || !event.has(field) || !event.get(field).isJsonObject()) {
+            return;
+        }
+        cancelAutoOffTask(channelId);
+
+        JsonObject control = event.get(field).getAsJsonObject();
+        JsonElement active = control.get(FIELD_ACTIVE);
+        JsonElement remaining = control.get(FIELD_REMAINING);
+        if (active == null || active.isJsonNull() || !active.getAsBoolean() || remaining == null
+                || remaining.isJsonNull()) {
+            return;
+        }
+        long delayMillis = Math.round(remaining.getAsDouble() * 1000);
+        if (delayMillis <= 0) {
+            return;
+        }
+        autoOffTasks.put(channelId, taskTracker.track(scheduler.schedule(() -> {
+            if (powerSaving && isLinked(channelId)) {
+                logger.info("Predicting {} auto-off after {}s with no confirmation (tracker believed dormant)",
+                        channelId, remaining.getAsDouble());
+                updateState(channelId, OnOffType.OFF);
+            }
+        }, delayMillis, TimeUnit.MILLISECONDS)));
+    }
+
+    /**
+     * Cancels any pending predicted auto-off for the given channel, e.g. because a fresh
+     * confirmation superseded it or a {@code start_failed} forced the channel OFF directly.
+     */
+    private void cancelAutoOffTask(String channelId) {
+        ScheduledFuture<?> previous = autoOffTasks.remove(channelId);
+        if (previous != null) {
+            previous.cancel(false);
+        }
+    }
+
+    /**
+     * Buzzer-specific entry point into {@link #scheduleOrCancelAutoOff} -- see that method for the
+     * shared mechanics and why only the buzzer is wired up so far.
+     */
+    protected void scheduleOrCancelBuzzerAutoOff(JsonObject event) {
+        scheduleOrCancelAutoOff(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
+    }
+
+    /**
+     * Buzzer-specific entry point into {@link #cancelAutoOffTask}.
+     */
+    private void cancelBuzzerAutoOffTask() {
+        cancelAutoOffTask(CHANNEL_BUZZER);
     }
 
     /**

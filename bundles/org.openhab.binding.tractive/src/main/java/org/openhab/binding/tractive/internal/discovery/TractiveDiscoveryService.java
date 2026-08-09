@@ -162,10 +162,8 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
     private void runScan(TractiveAccountHandler bridge, String userId) {
         HttpClient httpClient = bridge.getHttpClient();
 
-        // Map trackerId → pet info (pet ID + name) from trackable objects
         Map<String, PetInfo> trackerToPet = fetchDeviceToTrackableMap(bridge, httpClient, userId);
 
-        // List trackers and announce each as a discovery result
         JsonArray trackers = fetchTrackerList(bridge, httpClient, userId);
         if (trackers == null) {
             return;

@@ -55,7 +55,6 @@ class TractiveRetryUtilTest {
 
     @BeforeEach
     void setUp() {
-        // Run scheduled retry tasks immediately so tests need no real delays.
         lenient().when(scheduler.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class))).thenAnswer(inv -> {
             ((Runnable) inv.getArgument(0)).run();
             return mock(ScheduledFuture.class);

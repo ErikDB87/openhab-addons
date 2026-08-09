@@ -27,144 +27,291 @@ import org.openhab.core.thing.ThingTypeUID;
 @NonNullByDefault
 public class TractiveBindingConstants {
 
+    /** Binding ID, used to build every {@link ThingTypeUID} and as the OSGi component identifier. */
     public static final String BINDING_ID = "tractive";
 
-    // Thing Type UIDs
+    /** Thing type UID for the account bridge, which holds credentials and manages authentication. */
     public static final ThingTypeUID THING_TYPE_ACCOUNT = new ThingTypeUID(BINDING_ID, "account");
 
-    // Model Dog 6
+    /** Thing type UID for the Dog 6 tracker. */
     public static final ThingTypeUID THING_TYPE_DOG6 = new ThingTypeUID(BINDING_ID, "dog-6");
+    /** Tractive API {@code model_number} value identifying a Dog 6 tracker. */
     public static final String MODEL_DOG6 = "TG6C";
+    /** Human-readable display name for the Dog 6 model, used in discovery result labels. */
     public static final String MODEL_NAME_DOG6 = "Dog 6";
 
-    // Set and Map of all implemented models
+    /** Every thing type this binding can create a handler for. */
     public static final Set<ThingTypeUID> SUPPORTED_THING_TYPES = Set.of(THING_TYPE_DOG6);
+    /** Maps a Tractive API {@code model_number} (e.g. {@link #MODEL_DOG6}) to its display name. */
     public static final Map<String, String> MODEL_NAMES = Map.of(MODEL_DOG6, MODEL_NAME_DOG6);
 
-    // Channel IDs — position group (group-id#channel-id)
+    /** Channel ID for the tracker's current position. */
     public static final String CHANNEL_LOCATION = "position#location";
+    /** Channel ID for the timestamp of the last position report. */
     public static final String CHANNEL_LAST_POSITION_TIME = "position#last-position-time";
+    /** Channel ID for the tracker's current speed; {@code null} from the API is mapped to 0, never left unset. */
     public static final String CHANNEL_SPEED = "position#speed";
+    /**
+     * Channel ID for which sensor produced the last position fix (e.g. {@code GPS}, {@code KNOWN_WIFI}, {@code PHONE}).
+     */
     public static final String CHANNEL_SENSOR_USED = "position#sensor-used";
+    /** Channel ID for the last position fix's accuracy/uncertainty radius. */
     public static final String CHANNEL_POSITION_ACCURACY = "position#position-accuracy";
 
-    // Channel IDs — hardware group
+    /** Channel ID for battery level percentage. */
     public static final String CHANNEL_BATTERY_LEVEL = "hardware#battery-level";
+    /** Channel ID for the tracker's charging state (e.g. {@code NOT_CHARGING}). */
     public static final String CHANNEL_CHARGING_STATE = "hardware#charging-state";
-    public static final String CHANNEL_BATTERY_STATE = "hardware#battery-state"; // EDB: I doubt this is a useful
-                                                                                 // channel; it only reports "REGULAR"
-                                                                                 // or "FULL". Better to go with the
-                                                                                 // actual number.
-    public static final String CHANNEL_TRACKER_STATE = "hardware#tracker-state"; // EDB: I'm not sure this is a useful
-                                                                                 // channel; I've only ever seen it be
-                                                                                 // "OPERATIONAL".
+    /** Channel ID for the tracker's coarse battery state (e.g. {@code REGULAR}, {@code FULL}). */
+    public static final String CHANNEL_BATTERY_STATE = "hardware#battery-state";
+    /** Channel ID for the tracker's operational state (e.g. {@code OPERATIONAL}). */
+    public static final String CHANNEL_TRACKER_STATE = "hardware#tracker-state";
+    /**
+     * Channel ID for the timestamp of the most recent successful contact via any REST poll or real-time channel event;
+     * a lightweight stalled-tracker detector.
+     */
     public static final String CHANNEL_LAST_CONTACT = "hardware#last-contact";
 
-    // Channel IDs — commands group (writable)
+    /** Channel ID for the buzzer Switch. */
     public static final String CHANNEL_BUZZER = "commands#buzzer";
+    /** Channel ID for the LED Switch. */
     public static final String CHANNEL_LED = "commands#led";
+    /** Channel ID for the live-tracking Switch. */
     public static final String CHANNEL_LIVE_TRACKING = "commands#live-tracking";
 
-    // Channel IDs — health group
+    /** Channel ID for the duration of activity recorded today. */
     public static final String CHANNEL_ACTIVITY_RECORDED = "health#activity-recorded";
+    /** Channel ID for the daily activity duration goal. */
     public static final String CHANNEL_ACTIVITY_GOAL = "health#activity-goal";
+    /** Channel ID for the duration of daytime sleep. */
     public static final String CHANNEL_SLEEP_DAY = "health#sleep-day";
+    /** Channel ID for the duration of nighttime sleep. */
     public static final String CHANNEL_SLEEP_NIGHT = "health#sleep-night";
+    /** Channel ID for the duration spent calm. */
     public static final String CHANNEL_SLEEP_CALM = "health#sleep-calm";
+    /** Channel ID for the resting heart rate status (e.g. {@code NORMAL}). */
     public static final String CHANNEL_RESTING_HEART_RATE_STATUS = "health#resting-heart-rate-status";
+    /** Channel ID for the resting respiratory rate status (e.g. {@code NORMAL}). */
     public static final String CHANNEL_RESTING_RESPIRATORY_RATE_STATUS = "health#resting-respiratory-rate-status";
+    /** Channel ID for the count of unseen health alerts. */
     public static final String CHANNEL_UNSEEN_HEALTH_ALERTS = "health#unseen-health-alerts";
+    /** Channel ID for when activity/health data was last synced. */
     public static final String CHANNEL_ACTIVITY_SYNCED_AT = "health#activity-synced-at";
+    /** Channel ID for scratch status (e.g. {@code NORMAL}, {@code ELEVATED}, {@code NOT_ENOUGH_DATA_TODAY}). */
     public static final String CHANNEL_SCRATCH = "health#scratch";
 
-    // Channel IDs — dog group
+    /** Channel ID for bark status (e.g. {@code INFREQUENT}, {@code CALCULATING_BASELINE}). */
     public static final String CHANNEL_BARK = "dog#bark";
 
-    // Tractive API JSON field names — auth request body (POST auth/token)
+    /** JSON field name for the account email in the {@code POST auth/token} request body. */
     public static final String FIELD_PLATFORM_EMAIL = "platform_email";
+    /** JSON field name for the account password in the {@code POST auth/token} request body. */
     public static final String FIELD_PLATFORM_TOKEN = "platform_token";
+    /** JSON field name for the OAuth-style grant type in the {@code POST auth/token} request body. */
     public static final String FIELD_GRANT_TYPE = "grant_type";
+    /** Value of {@link #FIELD_GRANT_TYPE} required by the Tractive {@code auth} endpoint. */
     public static final String VALUE_GRANT_TYPE_TRACTIVE = "tractive";
 
-    // Tractive API JSON field names — auth response body
+    /** JSON field name for the bearer access token in the {@code auth} response body. */
     public static final String FIELD_ACCESS_TOKEN = "access_token";
+    /** JSON field name for the authenticated user's ID in the {@code auth} response body. */
     public static final String FIELD_USER_ID = "user_id";
+    /** JSON field name for the access token's expiry, as a Unix epoch, in the {@code auth} response body. */
     public static final String FIELD_EXPIRES_AT = "expires_at";
 
-    // Tractive API JSON field names — common envelope (REST responses & channel events)
+    /** JSON field name for an object's ID, common to most {@code REST} responses. */
     public static final String FIELD_ID = "_id";
+    /** JSON field name for the real-time channel message's type discriminator. */
     public static final String FIELD_MESSAGE = "message";
 
-    // Real-time channel message/type literal values
+    /** Real-time channel {@link #FIELD_MESSAGE} value for a keep-alive heartbeat; filtered out before dispatch. */
     public static final String MESSAGE_KEEP_ALIVE = "keep-alive";
+    /**
+     * Real-time channel {@link #FIELD_MESSAGE} value for the initial connection handshake; filtered out before
+     * dispatch.
+     */
     public static final String MESSAGE_HANDSHAKE = "handshake";
+    /** Real-time channel {@link #FIELD_MESSAGE} value for a combined position/hardware/command-state push. */
     public static final String MESSAGE_TRACKER_STATUS = "tracker_status";
+    /** Real-time channel {@link #FIELD_MESSAGE} value for a health/overview push. */
     public static final String MESSAGE_HEALTH_OVERVIEW = "health_overview";
+    /**
+     * Real-time channel {@link #FIELD_MESSAGE} value for a buzzer/LED/live-tracking command that timed out before the
+     * tracker executed it.
+     */
+    public static final String MESSAGE_START_FAILED = "start_failed";
+    /**
+     * Real-time channel {@link #FIELD_MESSAGE} value acking a routine tracker report (vitality/activity/bark/VeDBA) —
+     * despite the name, not a buzzer/LED/live-tracking command confirmation. Carries no actionable payload beyond which
+     * report type was processed.
+     */
+    public static final String MESSAGE_COMMAND_CONFIRMED = "command_confirmed";
+    /**
+     * Real-time channel {@link #FIELD_MESSAGE} value notifying that new activity/health data is available for a pet on
+     * a given local calendar date. Deliberately unconsumed: this push is immediately followed by a
+     * {@link #MESSAGE_HEALTH_OVERVIEW} push carrying the actual updated content, which {@code onChannelEvent()} already
+     * applies via its existing case — reacting to this message separately would only trigger a redundant REST call.
+     */
+    public static final String MESSAGE_ACTIVITY_DATA_UPDATED = "activity_data_updated";
 
-    // Real-time channel ("tracker_status" / "health_overview") field names
+    /** JSON field name for which command timed out, in a {@link #MESSAGE_START_FAILED} push. */
+    public static final String FIELD_COMMAND_TYPE = "command_type";
+    /** JSON field name for why a command timed out, in a {@link #MESSAGE_START_FAILED} push. */
+    public static final String FIELD_CANCELLATION_REASON = "cancellation_reason";
+    /** {@link #FIELD_COMMAND_TYPE} value for a failed LED command. */
+    public static final String VALUE_COMMAND_TYPE_LED = "MSG_S2D_LED_CONTROL";
+    /** {@link #FIELD_COMMAND_TYPE} value for a failed buzzer command. */
+    public static final String VALUE_COMMAND_TYPE_BUZZER = "MSG_S2D_BUZZER_CONTROL";
+    /** {@link #FIELD_COMMAND_TYPE} value for a failed live-tracking command. */
+    public static final String VALUE_COMMAND_TYPE_LIVE_TRACKING = "MSG_S2D_LIVE_TRACKING_MODE";
+
+    /** JSON field name for the tracker ID in a {@link #MESSAGE_TRACKER_STATUS} push. */
     public static final String FIELD_TRACKER_ID = "tracker_id";
+    /** JSON field name for the tracker's live operational state in a {@link #MESSAGE_TRACKER_STATUS} push. */
     public static final String FIELD_TRACKER_STATE_LIVE = "tracker_state";
+    /** JSON field name for the nested position object in a {@link #MESSAGE_TRACKER_STATUS} push. */
     public static final String FIELD_POSITION = "position";
+    /** JSON field name for the nested hardware object in a {@link #MESSAGE_TRACKER_STATUS} push. */
     public static final String FIELD_HARDWARE = "hardware";
+    /**
+     * JSON field name for position accuracy on the real-time channel; equivalent to {@link #FIELD_POS_UNCERTAINTY} in
+     * REST.
+     */
     public static final String FIELD_ACCURACY = "accuracy";
+    /** JSON field name for the nested payload in a {@link #MESSAGE_HEALTH_OVERVIEW} push. */
     public static final String FIELD_CONTENT = "content";
+    /** JSON field name for the pet ID inside a {@link #MESSAGE_HEALTH_OVERVIEW} push's {@link #FIELD_CONTENT}. */
     public static final String FIELD_PET_ID = "petId";
+    /** JSON field name for whether a buzzer/LED/live-tracking command is currently active. */
+    public static final String FIELD_ACTIVE = "active";
+    /**
+     * JSON field name for seconds remaining on an active buzzer/LED/live-tracking command; drives the buzzer auto-off
+     * prediction.
+     */
+    public static final String FIELD_REMAINING = "remaining";
 
-    // device_pos_report fields
+    /** JSON field name for the {@code [latitude, longitude]} position array. */
     public static final String FIELD_LATLONG = "latlong";
+    /** JSON field name for altitude in meters. */
     public static final String FIELD_ALTITUDE = "altitude";
+    /** JSON field name for a report's timestamp, as a Unix epoch. */
     public static final String FIELD_TIME = "time";
+    /** JSON field name for speed in m/s; nullable, mapped to 0 when absent. */
     public static final String FIELD_SPEED = "speed";
+    /** JSON field name for which sensor produced a REST position fix (e.g. GPS, KNOWN_WIFI, PHONE). */
     public static final String FIELD_SENSOR_USED = "sensor_used";
+    /** JSON field name for a REST position fix's accuracy/uncertainty radius in meters. */
     public static final String FIELD_POS_UNCERTAINTY = "pos_uncertainty";
 
-    // device_hw_report / tracker fields
+    /** JSON field name for battery level as a 0-100 integer. */
     public static final String FIELD_BATTERY_LEVEL = "battery_level";
+    /** JSON field name for the tracker's operational state in REST responses. */
     public static final String FIELD_TRACKER_STATE = "state";
+    /**
+     * JSON field name for the REST reason behind the tracker's state (e.g. {@link #VALUE_STATE_REASON_POWER_SAVING}).
+     */
+    public static final String FIELD_STATE_REASON = "state_reason";
+    /** JSON field name for the tracker's charging state. */
     public static final String FIELD_CHARGING_STATE = "charging_state";
+    /** JSON field name for the tracker's coarse battery state (e.g. REGULAR, FULL). */
     public static final String FIELD_BATTERY_STATE = "battery_state";
+    /** JSON field name for the tracker's model number, used to resolve its thing type during discovery. */
     public static final String FIELD_MODEL_NUMBER = "model_number";
 
-    // health/overview fields
+    /**
+     * JSON field name for the real-time channel's equivalent of {@link #FIELD_STATE_REASON} (same meaning, different
+     * key). Gates the buzzer auto-off prediction.
+     */
+    public static final String FIELD_TRACKER_STATE_REASON = "tracker_state_reason";
+    /**
+     * Value of {@link #FIELD_STATE_REASON} / {@link #FIELD_TRACKER_STATE_REASON} indicating the tracker is in its
+     * power-saving zone (radio may be dormant).
+     */
+    public static final String VALUE_STATE_REASON_POWER_SAVING = "POWER_SAVING";
+
+    /** JSON field name for the nested activity object in a health/overview response; may be JSON null. */
     public static final String FIELD_ACTIVITY = "activity";
+    /** JSON field name for the nested sleep object in a health/overview response; may be JSON null. */
     public static final String FIELD_SLEEP = "sleep";
+    /** JSON field name for the nested resting heart rate object in a health/overview response. */
     public static final String FIELD_RESTING_HEART_RATE = "restingHeartRate";
+    /** JSON field name for the nested resting respiratory rate object in a health/overview response. */
     public static final String FIELD_RESTING_RESPIRATORY_RATE = "restingRespiratoryRate";
+    /** JSON field name for the nested bark detection object in a health/overview response; may be JSON null. */
     public static final String FIELD_BARK = "bark";
+    /** JSON field name for the nested scratch detection object in a health/overview response; may be JSON null. */
     public static final String FIELD_SCRATCH = "scratch";
+    /** JSON field name for the nested health alerts object in a health/overview response. */
     public static final String FIELD_HEALTH_ALERTS = "healthAlerts";
+    /** JSON field name for the count of unseen health alerts. */
     public static final String FIELD_UNSEEN_COUNT = "unseenCount";
+    /** JSON field name for a status enum, shared by several nested health objects (e.g. bark, scratch). */
     public static final String FIELD_STATUS = "status";
+    /**
+     * JSON field name for when activity/health data was last synced; epoch integer in REST, ISO 8601 string on the
+     * real-time channel.
+     */
     public static final String FIELD_ACTIVITY_DATA_SYNCED_AT = "activityDataSyncedAt";
+    /** JSON field name for minutes of activity recorded today. */
     public static final String FIELD_MINUTES_ACTIVE = "minutesActive";
+    /** JSON field name for the daily activity goal in minutes. */
     public static final String FIELD_MINUTES_GOAL = "minutesGoal";
+    /** JSON field name for minutes of daytime sleep. */
     public static final String FIELD_MINUTES_DAY_SLEEP = "minutesDaySleep";
+    /** JSON field name for minutes of nighttime sleep. */
     public static final String FIELD_MINUTES_NIGHT_SLEEP = "minutesNightSleep";
+    /** JSON field name for minutes spent calm. */
     public static final String FIELD_MINUTES_CALM = "minutesCalm";
 
-    // trackable_object (discovery) fields
+    /** JSON field name linking a pet ({@code trackable_object}) back to its tracker ID. */
     public static final String FIELD_DEVICE_ID = "device_id";
+    /** JSON field name for the nested pet details object in a {@code trackable_object} response. */
     public static final String FIELD_DETAILS = "details";
+    /** JSON field name for the pet's name, used in discovery result labels. */
     public static final String FIELD_NAME = "name";
 
-    // Tracker command names and on/off states
+    /**
+     * Tracker command name for the buzzer; also the {@link #MESSAGE_TRACKER_STATUS} field name carrying its confirmed
+     * device state ({@code buzzer_control.active}).
+     */
     public static final String COMMAND_BUZZER_CONTROL = "buzzer_control";
+    /**
+     * Tracker command name for the LED; also the {@link #MESSAGE_TRACKER_STATUS} field name carrying its confirmed
+     * device state ({@code led_control.active}).
+     */
     public static final String COMMAND_LED_CONTROL = "led_control";
+    /**
+     * Tracker command name for live tracking; also the {@link #MESSAGE_TRACKER_STATUS} field name carrying its
+     * confirmed device state ({@code live_tracking.active}).
+     */
     public static final String COMMAND_LIVE_TRACKING = "live_tracking";
+    /** URL path segment for switching a command ({@link #COMMAND_BUZZER_CONTROL} etc.) on. */
     public static final String STATE_ON = "on";
+    /** URL path segment for switching a command ({@link #COMMAND_BUZZER_CONTROL} etc.) off. */
     public static final String STATE_OFF = "off";
 
-    // HTTP headers sent on every Tractive API request
+    /** HTTP header carrying the Tractive API client ID ({@link #API_CLIENT_ID}) on every request. */
     public static final String HEADER_TRACTIVE_CLIENT = "x-tractive-client";
+    /** HTTP header carrying the authenticated user ID on every request. */
     public static final String HEADER_TRACTIVE_USER = "x-tractive-user";
+    /** HTTP header carrying the bearer access token on every request. */
     public static final String HEADER_AUTHORIZATION = "authorization";
+    /** HTTP header name for the request content type. */
     public static final String HEADER_CONTENT_TYPE = "content-type";
+    /** Content type value used for every Tractive API request. */
     public static final String CONTENT_TYPE_JSON = "application/json;charset=UTF-8";
+    /** Prefix prepended to the access token in the {@link #HEADER_AUTHORIZATION} header. */
     public static final String AUTH_BEARER_PREFIX = "Bearer ";
 
-    // Tractive API constants
+    /**
+     * Client ID sent as {@link #HEADER_TRACTIVE_CLIENT} and in the auth request; validated by Tractive's backend
+     * against a real registry — see {@code doc/x-tractive-client-ids/README.md} for provenance and alternatives.
+     */
     public static final String API_CLIENT_ID = "625e533dc3c3b41c28a669f0";
+    /** Base URL for the main Tractive REST API. */
     public static final String API_BASE_URL = "https://graph.tractive.com/4/";
+    /** Base URL for the APS (health/overview) REST API. */
     public static final String APS_BASE_URL = "https://aps-api.tractive.com/api/1/";
+    /** URL for the real-time streaming NDJSON channel. */
     public static final String CHANNEL_URL = "https://channel.tractive.com/3/channel";
 }

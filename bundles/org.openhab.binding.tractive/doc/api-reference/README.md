@@ -7,6 +7,19 @@ Auto-generated, anonymized reference tree of every distinct JSON shape the Tract
 The Tractive API is undocumented.
 This directory is the binding's living record of what the API actually returns: REST endpoint responses and real-time channel messages, captured from real traffic rather than reverse-engineered from documentation.
 
+## Captured log-line formats
+
+`doc_scaffold.py` recognizes six binding-log trace formats:
+
+- `GET <url> → {json}` — any REST poll/response
+- `Channel line: {json}` — real-time channel push (`keep-alive`/`handshake` filtered out)
+- `Tracker list response: [json]`
+- `Trackable objects list: [json]`
+- `Trackable object <id> response: {json}`
+- `Command <name>/<state> → {json}`
+
+`Auth response: {json}` is deliberately **not** captured — it carries a live `access_token`/`user_id`.
+
 ## Layout
 
 ```text
@@ -32,7 +45,9 @@ api-reference/
 For example:
 
 ```bash
-python doc_scaffold.py --tracker-type dog-6 --review-log /path/outside/doc/review.md log1.txt log2.txt ...
+python doc_scaffold.py --tracker-type dog-6 --review-log /path/outside/doc/review.md \
+    --raw-archive /path/outside/doc/raw.jsonl --new-keys-log /path/outside/doc/new-keys.md \
+    log1.txt log2.txt ...
 ```
 
 Safe to run once, or repeatedly (e.g. daily), over newly captured logs.
@@ -41,6 +56,17 @@ Safe to run once, or repeatedly (e.g. daily), over newly captured logs.
 `--review-log` is **required** and must point **outside** the binding directory.
 It records every "in doubt" redaction (coordinate- or ID-shaped values that got anonymized based on a heuristic guess, not a known field name) together with the **real, un-anonymized value** — so it must never be committed or shared alongside this tree.
 Review it carefully for false positives.
+
+It is append-only and size-rotated (see "Log rotation" below) rather than growing without bound.
+
+Two more flags are optional:
+
+- `--raw-archive <path>` appends every extracted sample **unredacted**, one JSON object per line, tagged with which log-line format it came from (`tractive-binding-log-source`). Same rule as `--review-log`: point it **outside** the binding directory, never commit or share it. Also append-only and size-rotated (see "Log rotation" below).
+- `--new-keys-log <path>` is **overwritten** each run with only the JSON key paths first seen in that run (empty file if none) — meant to be polled by a separate alerting script, which is intentionally not this script's job.
+
+## Log rotation
+
+`--review-log` and `--raw-archive` are the only two outputs that are truly append-only across runs (everything else — `overview.md`, `shape-N.json`, `index.md`, `control-timeout-correlation.md` — is either rewritten each run or naturally capped by the finite set of distinct shapes/keys actually seen). Since this script runs hourly forever via a systemd timer with nothing else cleaning them up, both are size-rotated logrotate-style: once a file reaches `ROTATE_MAX_BYTES` (15 MiB by default), it's renamed to `<path>.1`, any existing `.1`/`.2` are shifted to `.2`/`.3`, and a fresh file is started — keeping up to `ROTATE_BACKUP_COUNT` (3 by default) old generations before the oldest is deleted. Adjust the constants at the top of `doc_scaffold.py` if your deployment needs a different cap.
 
 ## Anonymization
 

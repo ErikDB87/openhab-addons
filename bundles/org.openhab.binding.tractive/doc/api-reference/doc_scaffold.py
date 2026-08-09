@@ -2,7 +2,9 @@
 """
 Build and incrementally update a browsable API-payload reference tree
 (doc/<tracker-type>/...) from openHAB Tractive binding log files: REST
-"GET <url> -> {json}" lines and real-time "Channel line: {json}" lines.
+"GET <url> -> {json}" lines, real-time "Channel line: {json}" lines, and
+several discovery-service/command-response trace-line formats that predate
+that convention (tracker list, trackable objects list/detail, commands).
 
 For each endpoint / channel message type, writes one file per distinct
 *recursive* JSON shape (shape-1.json, shape-2.json, ...) plus a tree-shaped
@@ -16,9 +18,21 @@ redaction (heuristic coordinate match, ID-shape match) is appended as a row
 to a required, separate review-log table -- this log contains the REAL
 values, so it must never live under --out.
 
+Two additional outputs are opt-in via CLI flags:
+- --raw-archive appends every extracted sample verbatim and unredacted,
+  tagged with a "tractive-binding-log-source" field describing which
+  log-line format it came from, as JSONL. Same sensitivity as
+  --review-log: must live outside --out, must never be committed or shared.
+- --new-keys-log is overwritten (not appended) on every run with only the
+  JSON key paths first discovered in *this* run, empty if none. A separate
+  watcher script can alert on it without needing its own dedup logic --
+  sending that alert is deliberately not this script's job.
+
 Usage:
     python doc_scaffold.py --tracker-type dog-6 \
         --review-log /path/outside/doc/review.md \
+        [--raw-archive /path/outside/doc/raw.jsonl] \
+        [--new-keys-log /path/outside/doc/new-keys.md] \
         binding1.log binding2.log ...
 
 Output is always written to <the directory this script lives in>/<tracker-type>/...
@@ -48,6 +62,12 @@ ANON_LON = 4.476487652479988
 
 TRACKER_ID_RE = re.compile(r"^[A-Z0-9]{8}$")
 OBJECT_ID_RE = re.compile(r"^[0-9a-f]{24}$")
+
+# Real enum/status values that happen to be exactly 8 uppercase letters, so they collide with
+# TRACKER_ID_RE by coincidence. Confirmed via HEURISTIC_ID_SHAPE rows in review-log.md,
+# cross-referenced against the real (unredacted) values in raw-archive.jsonl. Add newly
+# discovered collisions here as they turn up.
+KNOWN_NON_ID_VALUES = {"CHARGING", "ELEVATED"}
 
 COORD_FIELD_NAMES = {"latlong", "home_location"}
 
@@ -85,6 +105,14 @@ REST_LINE_RE = re.compile(r"\bGET\s+(\S+)\s*\u2192\s*(\{.*|\[.*)$")
 #   Channel line: {"channel_id":"channel-...","message":"handshake"}
 CHANNEL_LINE_RE = re.compile(r"Channel line:\s*(\{.*)$")
 
+# Discovery-service and command-response trace lines predate the
+# "GET <url> -> <json>" convention and use their own bespoke formats --
+# without these, trackable_objects/trackable_object/tracker-list/command
+# payloads are silently invisible to this script.
+TRACKER_LIST_RE = re.compile(r"Tracker list response:\s*(\[.*)$")
+TRACKABLE_OBJECTS_LIST_RE = re.compile(r"Trackable objects list:\s*(\[.*)$")
+TRACKABLE_OBJECT_RE = re.compile(r"Trackable object (\S+) response:\s*(\{.*)$")
+COMMAND_RESPONSE_RE = re.compile(r"Command (\S+)/(\S+)\s*\u2192\s*(\{.*)$")
 
 # ---------------------------------------------------------------------------
 # Small helpers
@@ -147,6 +175,40 @@ def try_parse_json(text, source):
 
 
 # ---------------------------------------------------------------------------
+# Log rotation
+# ---------------------------------------------------------------------------
+
+# --review-log/--raw-archive are both append-only, and this script runs hourly
+# forever via a systemd timer with nothing else ever cleaning them up -- without
+# a cap they grow without bound. 100 MiB per generation x 3 kept backups is an
+# arbitrary but generous ceiling (~400 MiB total); adjust to taste.
+ROTATE_MAX_BYTES = 100 * 1024 * 1024
+ROTATE_BACKUP_COUNT = 3
+
+
+def rotate_if_too_large(path, max_bytes=ROTATE_MAX_BYTES, backup_count=ROTATE_BACKUP_COUNT):
+    """logrotate-style numbered rotation: path -> path.1 -> path.2 ... path.N, oldest dropped.
+
+    Called before opening `path` in append mode, so a run that would push it past
+    max_bytes starts a fresh file instead of appending onto an ever-growing one.
+    """
+    path = Path(path)
+    if not path.exists() or path.stat().st_size < max_bytes:
+        return
+
+    oldest = path.with_name(f"{path.name}.{backup_count}")
+    if oldest.exists():
+        oldest.unlink()
+
+    for i in range(backup_count - 1, 0, -1):
+        src = path.with_name(f"{path.name}.{i}")
+        if src.exists():
+            src.rename(path.with_name(f"{path.name}.{i + 1}"))
+
+    path.rename(path.with_name(f"{path.name}.1"))
+
+
+# ---------------------------------------------------------------------------
 # Extraction
 # ---------------------------------------------------------------------------
 
@@ -162,7 +224,7 @@ def extract_samples(log_paths):
                     payload = try_parse_json(json_text, source)
                     if payload is None:
                         continue
-                    yield normalize_endpoint(url), payload, source
+                    yield normalize_endpoint(url), payload, source, f"GET {url}"
                     continue
 
                 m = CHANNEL_LINE_RE.search(line)
@@ -173,10 +235,45 @@ def extract_samples(log_paths):
                     message = payload.get("message") if isinstance(payload, dict) else None
                     if message in ("keep-alive", "handshake"):
                         continue
-                    if message is None:
-                        yield "channel/_unclassified", payload, source
-                    else:
-                        yield f"channel/{message}", payload, source
+                    group_key = "channel/_unclassified" if message is None else f"channel/{message}"
+                    yield group_key, payload, source, "Channel line"
+                    continue
+
+                m = TRACKER_LIST_RE.search(line)
+                if m:
+                    payload = try_parse_json(m.group(1), source)
+                    if payload is None:
+                        continue
+                    yield "graph.tractive.com/4/user/{objectId}/trackers", payload, source, "Tracker list response"
+                    continue
+
+                m = TRACKABLE_OBJECTS_LIST_RE.search(line)
+                if m:
+                    payload = try_parse_json(m.group(1), source)
+                    if payload is None:
+                        continue
+                    yield ("graph.tractive.com/4/user/{objectId}/trackable_objects", payload, source,
+                           "Trackable objects list")
+                    continue
+
+                m = TRACKABLE_OBJECT_RE.search(line)
+                if m:
+                    pet_id, json_text = m.group(1), m.group(2)
+                    payload = try_parse_json(json_text, source)
+                    if payload is None:
+                        continue
+                    yield ("graph.tractive.com/4/trackable_object/{objectId}", payload, source,
+                           f"Trackable object {pet_id} response")
+                    continue
+
+                m = COMMAND_RESPONSE_RE.search(line)
+                if m:
+                    command_name, state, json_text = m.group(1), m.group(2), m.group(3)
+                    payload = try_parse_json(json_text, source)
+                    if payload is None:
+                        continue
+                    group_key = f"graph.tractive.com/4/tracker/{{trackerId}}/command/{command_name}"
+                    yield group_key, payload, source, f"Command {command_name}/{state}"
 
 
 # ---------------------------------------------------------------------------
@@ -192,6 +289,7 @@ class RedactionLog:
 
     def write(self, path):
         path = Path(path)
+        rotate_if_too_large(path)
         is_new = not path.exists()
         with open(path, "a", encoding="utf-8") as f:
             if is_new:
@@ -220,7 +318,7 @@ def redact(obj, source, review_log, path=""):
         field_name = path.rsplit(".", 1)[-1] if path else ""
         id_like_field = is_id_like_field(field_name)
 
-        if TRACKER_ID_RE.match(obj):
+        if TRACKER_ID_RE.match(obj) and obj not in KNOWN_NON_ID_VALUES:
             if not id_like_field:
                 print(f"WARN: heuristic ID-shape match at {path} ({source})", file=sys.stderr)
                 review_log.record("HEURISTIC_ID_SHAPE", path, source, obj, "{trackerId}")
@@ -402,6 +500,7 @@ def format_value_summary(stat):
 def write_overview(group_dir, redacted_payloads):
     overview_path = group_dir / "overview.md"
     prev_total, stats, explanations = load_previous_overview(overview_path)
+    previously_known_keys = set(stats.keys())
 
     key_order = list(stats.keys())
     total = prev_total
@@ -424,6 +523,8 @@ def write_overview(group_dir, redacted_payloads):
 
     overview_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+    return [key for key in key_order if key not in previously_known_keys]
+
 
 # ---------------------------------------------------------------------------
 # index.md generation
@@ -441,9 +542,13 @@ def build_index(out_root, tracker_type):
 
         shape_count = len(list(group_dir.glob("shape-*.json")))
 
+        def is_top_level(key):
+            stripped = key[3:] if key.startswith("[].") else key
+            return "." not in stripped and "[]" not in stripped
+
         top_level_keys = [
             key for key, _ in STATSKEY_RE.findall(text)
-            if "." not in key and "[]" not in key
+            if is_top_level(key)
         ]
 
         rows.append((group_key, total, shape_count, top_level_keys))
@@ -480,6 +585,110 @@ def build_index(out_root, tracker_type):
 
 
 # ---------------------------------------------------------------------------
+# Control-object timeout correlation
+# ---------------------------------------------------------------------------
+
+CONTROL_FIELDS = ("led_control", "buzzer_control", "live_tracking")
+
+CONTROL_STATS_RE = re.compile(r"<!--\s*control-stats:\s*(.*?)\s*-->", re.S)
+
+
+def load_previous_control_stats(path):
+    """Loads the JSON stats blob embedded in a previous run's control-timeout-correlation.md
+    so this run's samples merge into it instead of overwriting it -- mirrors what
+    load_previous_overview() does for overview.md.
+    """
+    if not path.exists():
+        return {}
+    match = CONTROL_STATS_RE.search(path.read_text(encoding="utf-8"))
+    if not match:
+        return {}
+    return json.loads(match.group(1))
+
+
+def extract_control_samples(group_key, payload):
+    """Yields (control_field, control_object) pairs from a single already-redacted payload.
+
+    Two distinct origins carry the same control-object shape: a channel/tracker_status push
+    nests it under led_control/buzzer_control/live_tracking, while a command-response group's
+    payload *is* the control object directly.
+    """
+    if group_key == "channel/tracker_status" and isinstance(payload, dict):
+        for field in CONTROL_FIELDS:
+            value = payload.get(field)
+            if isinstance(value, dict):
+                yield field, value
+        return
+
+    for field in CONTROL_FIELDS:
+        if group_key == f"graph.tractive.com/4/tracker/{{trackerId}}/command/{field}" and isinstance(payload, dict):
+            yield field, payload
+
+
+def merge_control_timeout_stats(stats, control_field, control_object, source, origin):
+    active = control_object.get("active")
+    active_key = json.dumps(active)
+    entry = stats.setdefault(control_field, {}).setdefault(active_key, {"timeouts": {}, "examples": []})
+
+    timeout_key = json.dumps(control_object.get("timeout"))
+    timeout_entry = entry["timeouts"].setdefault(timeout_key, {"count": 0, "pending_true": 0, "pending_false": 0})
+    timeout_entry["count"] += 1
+    pending = control_object.get("pending")
+    if pending is True:
+        timeout_entry["pending_true"] += 1
+    elif pending is False:
+        timeout_entry["pending_false"] += 1
+
+    if len(entry["examples"]) < 5:
+        entry["examples"].append({"origin": origin, "source": source, "control_object": control_object})
+
+
+def write_control_timeout_correlation(out_root, control_samples):
+    """Writes control-timeout-correlation.md: for each of led_control/buzzer_control/
+    live_tracking, how `timeout` varies with `active`, across every occurrence seen -- whether
+    nested in a tracker_status push or standalone in a command response.
+
+    Answers the open question of whether `timeout` is a fixed per-channel constant or varies with
+    context (e.g. LED seen at both 300 and 3600) without having to eyeball a raw log by hand.
+    """
+    out_path = out_root / "control-timeout-correlation.md"
+    stats = load_previous_control_stats(out_path)
+    for group_key, payload, source in control_samples:
+        origin = "tracker_status push" if group_key == "channel/tracker_status" else "command response"
+        for control_field, control_object in extract_control_samples(group_key, payload):
+            merge_control_timeout_stats(stats, control_field, control_object, source, origin)
+
+    lines = [
+        "# Control-object timeout correlation", "",
+        "Auto-generated by `doc_scaffold.py` -- do not hand-edit, changes will be overwritten.", "",
+        "For each control field, how `timeout` varies with `active`, across every occurrence seen "
+        "in a `tracker_status` push *or* a command response (both carry the same object shape).", "",
+        f"<!-- control-stats: {json.dumps(stats)} -->", "",
+    ]
+    for control_field in CONTROL_FIELDS:
+        lines.append(f"## `{control_field}`")
+        lines.append("")
+        bucket = stats.get(control_field, {})
+        if not bucket:
+            lines.append("_None captured yet._")
+            lines.append("")
+            continue
+        for active_key in sorted(bucket.keys()):
+            entry = bucket[active_key]
+            lines.append(f"- `active={active_key}`:")
+            for timeout_key, timeout_entry in sorted(entry["timeouts"].items()):
+                lines.append(f"  - `timeout={timeout_key}` — {timeout_entry['count']} sample(s) "
+                             f"(pending=true: {timeout_entry['pending_true']}, "
+                             f"pending=false: {timeout_entry['pending_false']})")
+            lines.append("  - examples:")
+            for ex in entry["examples"]:
+                lines.append(f"    - {ex['origin']} ({ex['source']}): `{json.dumps(ex['control_object'])}`")
+        lines.append("")
+
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 
@@ -487,17 +696,30 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracker-type", required=True, help="e.g. dog-6")
     parser.add_argument("--review-log", required=True, help="Path to append redaction review-log rows to")
+    parser.add_argument("--raw-archive", help="Path to append unredacted {source, payload} JSONL rows to "
+                                               "(must live outside --out, same sensitivity as --review-log)")
+    parser.add_argument("--new-keys-log", help="Path to overwrite with keys first discovered in this run "
+                                                "(empty if none); a separate watcher can alert on it")
     parser.add_argument("log_files", nargs="+")
     args = parser.parse_args()
 
     review_log = RedactionLog()
     groups = {}
+    raw_rows = []
+    control_samples = []
 
-    for group_key, payload, source in extract_samples(args.log_files):
+    for group_key, payload, source, log_label in extract_samples(args.log_files):
         groups.setdefault(group_key, []).append((payload, source))
+        raw_rows.append({"tractive-binding-log-source": log_label, "source": source, "payload": payload})
+
+    if args.raw_archive:
+        rotate_if_too_large(args.raw_archive)
+        with open(args.raw_archive, "a", encoding="utf-8") as f:
+            for row in raw_rows:
+                f.write(json.dumps(row) + "\n")
 
     out_root = SCRIPT_DIR / args.tracker_type
-    id_redaction_count = 0
+    new_keys = []
 
     for group_key, payload_sources in groups.items():
         group_dir = out_root / group_key
@@ -505,18 +727,29 @@ def main():
         for payload, source in payload_sources:
             redacted = redact(payload, source, review_log)
             redacted_payloads.append(redacted)
+            control_samples.append((group_key, redacted, source))
 
         write_shapes(group_dir, redacted_payloads)
-        write_overview(group_dir, redacted_payloads)
+        new_keys.extend((group_key, key) for key in write_overview(group_dir, redacted_payloads))
 
+    write_control_timeout_correlation(out_root, control_samples)
     build_index(out_root, args.tracker_type)
 
     review_log.write(args.review_log)
     id_redaction_count = sum(1 for row in review_log.rows if row[0] == "ID_SHAPE_MATCH")
 
+    if args.new_keys_log:
+        with open(args.new_keys_log, "w", encoding="utf-8") as f:
+            if new_keys:
+                f.write("| Group | Key |\n|---|---|\n")
+                for group_key, key in new_keys:
+                    f.write(f"| `{group_key}` | `{key}` |\n")
+
     print(f"Processed {sum(len(v) for v in groups.values())} samples across {len(groups)} groups.")
     print(f"Redaction review log: {args.review_log} ({len(review_log.rows)} rows, "
           f"{id_redaction_count} ID-shape matches)")
+    if new_keys:
+        print(f"New keys discovered this run: {len(new_keys)} (see {args.new_keys_log})")
     print(f"Index written to {out_root / 'index.md'}")
 
 
