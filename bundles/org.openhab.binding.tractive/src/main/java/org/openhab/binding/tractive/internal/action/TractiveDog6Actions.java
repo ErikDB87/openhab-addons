@@ -95,4 +95,13 @@ public class TractiveDog6Actions implements ThingActions {
         String json = h.fetchPositions(from, to);
         return json != null ? Map.of("positions", json) : Map.of();
     }
+
+    /** Triggers an immediate pet-profile refresh. */
+    @RuleAction(label = "Refresh profile", description = "Triggers an immediate refresh of the \"Profile\" channel group. Unlike the other refresh actions, this data is never polled automatically — see the README.")
+    public void refreshProfile() {
+        TractiveDog6Handler h = handler;
+        if (h != null) {
+            h.refreshProfile();
+        }
+    }
 }

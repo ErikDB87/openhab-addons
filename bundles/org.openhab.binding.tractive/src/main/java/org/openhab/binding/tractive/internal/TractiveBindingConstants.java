@@ -71,6 +71,29 @@ public class TractiveBindingConstants {
      * a lightweight stalled-tracker detector.
      */
     public static final String CHANNEL_LAST_CONTACT = "hardware#last-contact";
+    /** Channel ID for why the tracker's operational state is what it is (e.g. {@code POWER_SAVING}). */
+    public static final String CHANNEL_TRACKER_STATE_REASON = "hardware#tracker-state-reason";
+    /** Channel ID for the ID of the geofence zone currently most relevant to the tracker's position. */
+    public static final String CHANNEL_ZONE_ID = "hardware#zone-id";
+    /**
+     * Channel ID for the kind of the currently most relevant geofence zone
+     * ({@code POWER_SAVING}/{@code SAFE}/{@code DANGER}).
+     */
+    public static final String CHANNEL_ZONE_TYPE = "hardware#zone-type";
+    /** Channel ID for when the tracker entered its currently most relevant geofence zone. */
+    public static final String CHANNEL_ZONE_ENTERED_AT = "hardware#zone-entered-at";
+    /** Channel ID for when the tracker was last confirmed still inside its currently most relevant geofence zone. */
+    public static final String CHANNEL_ZONE_LAST_SEEN_AT = "hardware#zone-last-seen-at";
+    /** Channel ID for the ID of the tracker's configured Power Saving Zone. */
+    public static final String CHANNEL_POWER_SAVING_ZONE_ID = "hardware#power-saving-zone-id";
+    /** Channel ID for the tracker's hardware model code (e.g. {@code TG6C}). */
+    public static final String CHANNEL_MODEL_NUMBER = "hardware#model-number";
+    /** Channel ID for the tracker's hardware color/edition variant (e.g. {@code BROWN-LINES}). */
+    public static final String CHANNEL_HW_EDITION = "hardware#hw-edition";
+    /** Channel ID for the tracker's onboard firmware version string. */
+    public static final String CHANNEL_FIRMWARE_VERSION = "hardware#firmware-version";
+    /** Channel ID for the configured geofence entry/exit detection sensitivity. */
+    public static final String CHANNEL_GEOFENCE_SENSITIVITY = "hardware#geofence-sensitivity";
 
     /** Channel ID for the buzzer Switch. */
     public static final String CHANNEL_BUZZER = "commands#buzzer";
@@ -78,6 +101,18 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_LED = "commands#led";
     /** Channel ID for the live-tracking Switch. */
     public static final String CHANNEL_LIVE_TRACKING = "commands#live-tracking";
+    /** Channel ID for the buzzer's configured auto-stop duration. */
+    public static final String CHANNEL_BUZZER_TIMEOUT = "commands#buzzer-timeout";
+    /** Channel ID for seconds remaining before the buzzer auto-stops. */
+    public static final String CHANNEL_BUZZER_REMAINING = "commands#buzzer-remaining";
+    /** Channel ID for the LED's configured auto-stop duration. */
+    public static final String CHANNEL_LED_TIMEOUT = "commands#led-timeout";
+    /** Channel ID for seconds remaining before the LED auto-stops. */
+    public static final String CHANNEL_LED_REMAINING = "commands#led-remaining";
+    /** Channel ID for live tracking's configured auto-stop duration. */
+    public static final String CHANNEL_LIVE_TRACKING_TIMEOUT = "commands#live-tracking-timeout";
+    /** Channel ID for seconds remaining before live tracking auto-stops. */
+    public static final String CHANNEL_LIVE_TRACKING_REMAINING = "commands#live-tracking-remaining";
 
     /** Channel ID for the duration of activity recorded today. */
     public static final String CHANNEL_ACTIVITY_RECORDED = "health#activity-recorded";
@@ -102,6 +137,30 @@ public class TractiveBindingConstants {
 
     /** Channel ID for bark status (e.g. {@code INFREQUENT}, {@code CALCULATING_BASELINE}). */
     public static final String CHANNEL_BARK = "dog#bark";
+
+    /**
+     * Channel ID for the pet's breed-catalog ID(s), comma-separated. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_BREED_IDS = "profile#breed-ids";
+    /** Channel ID for the pet's sex. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    public static final String CHANNEL_GENDER = "profile#gender";
+    /** Channel ID for the pet's date of birth. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    public static final String CHANNEL_BIRTHDAY = "profile#birthday";
+    /** Channel ID for the pet's height. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    public static final String CHANNEL_HEIGHT = "profile#height";
+    /** Channel ID for the pet's weight. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    public static final String CHANNEL_WEIGHT = "profile#weight";
+    /**
+     * Channel ID for whether the pet is spayed/neutered. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_NEUTERED = "profile#neutered";
+    /**
+     * Channel ID for the pet's configured home location. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_HOME_LOCATION = "profile#home-location";
+    /** Channel ID for when the Profile channel group was last fetched. */
+    public static final String CHANNEL_PROFILE_LAST_UPDATED = "profile#last-updated";
 
     /** JSON field name for the account email in the {@code POST auth/token} request body. */
     public static final String FIELD_PLATFORM_EMAIL = "platform_email";
@@ -189,6 +248,8 @@ public class TractiveBindingConstants {
      * prediction.
      */
     public static final String FIELD_REMAINING = "remaining";
+    /** JSON field name for a buzzer/LED/live-tracking control object's configured auto-stop duration in seconds. */
+    public static final String FIELD_TIMEOUT = "timeout";
 
     /** JSON field name for the {@code [latitude, longitude]} position array. */
     public static final String FIELD_LATLONG = "latlong";
@@ -215,9 +276,17 @@ public class TractiveBindingConstants {
     public static final String FIELD_CHARGING_STATE = "charging_state";
     /** JSON field name for the tracker's coarse battery state (e.g. REGULAR, FULL). */
     public static final String FIELD_BATTERY_STATE = "battery_state";
-    /** JSON field name for the tracker's model number, used to resolve its thing type during discovery. */
+    /**
+     * JSON field name for the tracker's model number, in {@code tracker/{trackerId}}. Used to resolve its thing type
+     * during discovery, and feeds {@link #CHANNEL_MODEL_NUMBER} on the running thing.
+     */
     public static final String FIELD_MODEL_NUMBER = "model_number";
-
+    /** JSON field name for the tracker's onboard firmware version string, in {@code tracker/{trackerId}}. */
+    public static final String FIELD_FW_VERSION = "fw_version";
+    /** JSON field name for the tracker's hardware color/edition variant, in {@code tracker/{trackerId}}. */
+    public static final String FIELD_HW_EDITION = "hw_edition";
+    /** JSON field name for the configured geofence entry/exit detection sensitivity, in {@code tracker/{trackerId}}. */
+    public static final String FIELD_GEOFENCE_SENSITIVITY = "geofence_sensitivity";
     /**
      * JSON field name for the real-time channel's equivalent of {@link #FIELD_STATE_REASON} (same meaning, different
      * key). Gates the buzzer auto-off prediction.
@@ -228,6 +297,35 @@ public class TractiveBindingConstants {
      * power-saving zone (radio may be dormant).
      */
     public static final String VALUE_STATE_REASON_POWER_SAVING = "POWER_SAVING";
+
+    /** JSON field name for the nested prioritized-zone object in a {@link #MESSAGE_TRACKER_STATUS} push. */
+    public static final String FIELD_PRIORITIZED_ZONE = "prioritized_zone";
+    /** JSON field name for a zone's kind, inside {@link #FIELD_PRIORITIZED_ZONE}. */
+    public static final String FIELD_ZONE_TYPE = "type";
+    /**
+     * JSON field name for when the tracker was last confirmed inside a zone, inside {@link #FIELD_PRIORITIZED_ZONE}.
+     */
+    public static final String FIELD_ZONE_LAST_SEEN_AT = "last_seen_at";
+    /** JSON field name for when the tracker entered a zone, inside {@link #FIELD_PRIORITIZED_ZONE}. */
+    public static final String FIELD_ZONE_ENTERED_AT = "entered_at";
+    /** JSON field name for the REST-flattened form of the prioritized zone's ID, in {@code tracker/{trackerId}}. */
+    public static final String FIELD_PRIORITIZED_ZONE_ID = "prioritized_zone_id";
+    /** JSON field name for the REST-flattened form of the prioritized zone's kind, in {@code tracker/{trackerId}}. */
+    public static final String FIELD_PRIORITIZED_ZONE_TYPE = "prioritized_zone_type";
+    /**
+     * JSON field name for the REST-flattened form of {@link #FIELD_ZONE_LAST_SEEN_AT}, in {@code tracker/{trackerId}}.
+     */
+    public static final String FIELD_PRIORITIZED_ZONE_LAST_SEEN_AT = "prioritized_zone_last_seen_at";
+    /**
+     * JSON field name for the REST-flattened form of {@link #FIELD_ZONE_ENTERED_AT}, in {@code tracker/{trackerId}}.
+     */
+    public static final String FIELD_PRIORITIZED_ZONE_ENTERED_AT = "prioritized_zone_entered_at";
+    /**
+     * JSON field name for the ID of the tracker's configured Power Saving Zone; same key in both REST
+     * ({@code tracker/{trackerId}}) and the real-time channel's {@link #MESSAGE_TRACKER_STATUS} push (top-level,
+     * not inside {@link #FIELD_PRIORITIZED_ZONE}).
+     */
+    public static final String FIELD_POWER_SAVING_ZONE_ID = "power_saving_zone_id";
 
     /** JSON field name for the nested activity object in a health/overview response; may be JSON null. */
     public static final String FIELD_ACTIVITY = "activity";
@@ -269,6 +367,23 @@ public class TractiveBindingConstants {
     public static final String FIELD_DETAILS = "details";
     /** JSON field name for the pet's name, used in discovery result labels. */
     public static final String FIELD_NAME = "name";
+    /** JSON field name for the pet's sex, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_GENDER = "gender";
+    /** JSON field name for the pet's date of birth (epoch), inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_BIRTHDAY = "birthday";
+    /** JSON field name for the pet's height in meters, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_HEIGHT = "height";
+    /** JSON field name for the pet's weight in grams, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_WEIGHT = "weight";
+    /** JSON field name for whether the pet is spayed/neutered, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_NEUTERED = "neutered";
+    /** JSON field name for the pet's breed-catalog ID(s) array, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_BREED_IDS = "breed_ids";
+    /**
+     * JSON field name for the pet's configured home location {@code [latitude, longitude]}, in
+     * {@code trackable_object/{petId}}.
+     */
+    public static final String FIELD_HOME_LOCATION = "home_location";
 
     /**
      * Tracker command name for the buzzer; also the {@link #MESSAGE_TRACKER_STATUS} field name carrying its confirmed

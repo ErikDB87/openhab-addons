@@ -27,7 +27,9 @@ Capabilities exposed by this binding:
 - **Location** — latitude, longitude, altitude, positioning sensor type (GPS, Wi-Fi, phone-assisted), and estimated accuracy
 - **Speed** — movement speed
 - **Battery** — charge level (0–100 %), charging state, and battery health state
-- **Tracker state** — operational state as reported by the tracker hardware
+- **Tracker state** — operational state as reported by the tracker hardware, and why it's in that state (e.g. inside its configured Power Saving Zone)
+- **Geofence zone** — which zone (and what kind) the tracker currently considers itself in, when it entered, and when it was last confirmed still there
+- **Hardware info** — model number, hardware edition, onboard firmware version, and configured geofence sensitivity
 - **Activity** — active time today and the configured daily goal
 - **Sleep** — daytime sleep, night sleep, and calm time
 - **Health monitoring** — resting heart rate status, resting respiratory rate status, bark frequency, and scratch frequency
@@ -36,6 +38,8 @@ Capabilities exposed by this binding:
 - **Buzzer** — remotely activate an audible tone
 - **LED** — remotely activate the LED light on the tracker
 - **Live tracking** — enable high-frequency location updates on demand
+- **Command timing** — for the buzzer, LED, and live tracking: configured auto-stop duration and seconds remaining before it stops
+- **Pet profile** — breed, sex, birthday, height, weight, neutered status, and home location, as entered in the Tractive app (fetched once at Thing setup, refreshable on demand — see the `profile` channel group below)
 - **Last contact** — timestamp of the most recent successful contact with the tracker, be it via REST poll or real-time event
 
 ## Discovery
@@ -84,21 +88,37 @@ Both `trackerId` and `trackedPetId` are filled in automatically when the Thing i
 
 ### Group `hardware`
 
-| Channel ID                | Type     | R/W | Description                                                                                               |
-| ------------------------- | -------- | --- | --------------------------------------------------------------------------------------------------------- |
-| `hardware#battery-level`  | Number   | R   | Battery charge level, 0–100 %                                                                             |
-| `hardware#charging-state` | String   | R   | Charging state reported by the tracker                                                                    |
-| `hardware#battery-state`  | String   | R   | Battery health state                                                                                      |
-| `hardware#tracker-state`  | String   | R   | Operational state of the tracker hardware                                                                 |
-| `hardware#last-contact`   | DateTime | R   | Timestamp of the most recent successful contact with the tracker (be it via REST poll or real-time event) |
+| Channel ID                      | Type     | R/W | Description                                                                                                    |
+| ------------------------------- | -------- | --- | -------------------------------------------------------------------------------------------------------------- |
+| `hardware#battery-level`        | Number   | R   | Battery charge level, 0–100 %                                                                                  |
+| `hardware#charging-state`       | String   | R   | Charging state reported by the tracker                                                                         |
+| `hardware#battery-state`        | String   | R   | Battery health state                                                                                           |
+| `hardware#tracker-state`        | String   | R   | Operational state of the tracker hardware                                                                      |
+| `hardware#zone-type`            | String   | R   | Kind of the geofence zone currently most relevant to the tracker's position (`POWER_SAVING`, `SAFE`, `DANGER`) |
+| `hardware#tracker-state-reason` | String   | R   | Why `tracker-state` is what it is (e.g. `POWER_SAVING`, `STALE_POSITION`)                                      |
+| `hardware#zone-id`              | String   | R   | Internal ID of the geofence zone currently most relevant to the tracker's position                             |
+| `hardware#zone-entered-at`      | DateTime | R   | Time the tracker entered its currently most relevant geofence zone                                             |
+| `hardware#zone-last-seen-at`    | DateTime | R   | Time the tracker was last confirmed still inside its currently most relevant geofence zone                     |
+| `hardware#power-saving-zone-id` | String   | R   | Internal ID of the tracker's configured Power Saving Zone                                                      |
+| `hardware#model-number`         | String   | R   | Tractive hardware model code (e.g. `TG6C`)                                                                     |
+| `hardware#hw-edition`           | String   | R   | Hardware color/edition variant of the physical unit (e.g. `BROWN-LINES`)                                       |
+| `hardware#firmware-version`     | String   | R   | Onboard firmware version string; changes across OTA firmware updates                                           |
+| `hardware#geofence-sensitivity` | String   | R   | Configured geofence entry/exit detection sensitivity (e.g. `HIGH`)                                             |
+| `hardware#last-contact`         | DateTime | R   | Timestamp of the most recent successful contact with the tracker (be it via REST poll or real-time event)      |
 
 ### Group `commands`
 
-| Channel ID               | Type   | R/W | Description                                              |
-| ------------------------ | ------ | --- | -------------------------------------------------------- |
-| `commands#buzzer`        | Switch | R/W | Activate (`ON`) or deactivate (`OFF`) the audible buzzer |
-| `commands#led`           | Switch | R/W | Activate (`ON`) or deactivate (`OFF`) the LED light      |
-| `commands#live-tracking` | Switch | R/W | Enable or disable high-frequency live tracking           |
+| Channel ID                         | Type        | R/W | Description                                                                      |
+| ---------------------------------- | ----------- | --- | -------------------------------------------------------------------------------- |
+| `commands#buzzer`                  | Switch      | R/W | Activate (`ON`) or deactivate (`OFF`) the audible buzzer                         |
+| `commands#buzzer-timeout`          | Number:Time | R   | Configured maximum duration the buzzer is allowed to run before auto-stopping    |
+| `commands#buzzer-remaining`        | Number:Time | R   | Seconds left before the buzzer auto-stops                                        |
+| `commands#led`                     | Switch      | R/W | Activate (`ON`) or deactivate (`OFF`) the LED light                              |
+| `commands#led-timeout`             | Number:Time | R   | Configured maximum duration the LED is allowed to run before auto-stopping       |
+| `commands#led-remaining`           | Number:Time | R   | Seconds left before the LED auto-stops                                           |
+| `commands#live-tracking`           | Switch      | R/W | Enable or disable high-frequency live tracking                                   |
+| `commands#live-tracking-timeout`   | Number:Time | R   | Configured maximum duration live tracking is allowed to run before auto-stopping |
+| `commands#live-tracking-remaining` | Number:Time | R   | Seconds left before live tracking auto-stops                                     |
 
 > **Note 1:** Tractive commands are queued in the cloud.
 > There may be a delay between sending a command and the tracker responding physically.
@@ -107,6 +127,10 @@ Both `trackerId` and `trackedPetId` are filled in automatically when the Thing i
 > If Tractive reports that a command timed out before the tracker ever executed it, the binding forces the Item back to `OFF`; this is confirmed correct for a failed _activation_ (turning the feature on), but a failed _deactivation_ would also force the Item to `OFF`, which could be wrong if the device is actually still on — the failure message doesn't say which direction failed, and that case is unverified.
 > If no resolution (success or failure) ever arrives at all, the Item is left showing openHAB's initial optimistic guess indefinitely.
 > This note still needs work!
+>
+> **Note 3:** The `-timeout` and `-remaining` channels are only updated by the real-time channel push, not by REST polling — the command endpoints' own synchronous HTTP response is not reliable (see Note 2), so there is nothing safe to poll for these two fields.
+>
+> **Note 4:** The tracker's physical button may be able to silence an active buzzer locally — but this is not yet confirmed. Real-world testing so far shows the buzzer eventually reading `OFF` after a button press, but with **no corresponding real-time push, no REST poll showing fresh data, and no `start_failed` message** anywhere around the press. The leading theory is that the button stops the buzzer without the tracker ever reporting that fact back to the cloud, meaning the Item may keep showing `ON` for a while after the buzzer has actually already stopped — but a coincidental, unrelated resolution around the same time hasn't been ruled out either. **This needs dedicated, controlled testing** (press the button with no other command in flight, and confirm whether the logs show literally nothing) before this behavior can be documented with confidence.
 
 ### Group `health`
 
@@ -129,16 +153,34 @@ Both `trackerId` and `trackedPetId` are filled in automatically when the Thing i
 | ---------- | ------ | --- | ---------------------------------------------------------------- |
 | `dog#bark` | String | R   | Bark frequency status, e.g. `INFREQUENT`, `CALCULATING_BASELINE` |
 
+### Group `profile`
+
+| Channel ID              | Type          | R/W | Description                                  |
+| ----------------------- | ------------- | --- | -------------------------------------------- |
+| `profile#breed-ids`     | String        | R   | Comma-separated Tractive breed-catalog ID(s) |
+| `profile#gender`        | String        | R   | The pet's sex (`M`/`F`)                      |
+| `profile#birthday`      | DateTime      | R   | The pet's date of birth                      |
+| `profile#height`        | Number:Length | R   | The pet's height                             |
+| `profile#weight`        | Number:Mass   | R   | The pet's weight                             |
+| `profile#neutered`      | Switch        | R   | Whether the pet is spayed/neutered           |
+| `profile#home-location` | Location      | R   | The pet's configured home location           |
+| `profile#last-updated`  | DateTime      | R   | When this group was last fetched             |
+
+> **Note:** This group holds mostly-static pet-profile data from the Tractive app (breed, birthday, weight, etc.).
+> It is **not** part of the timed polling schedule (`refreshInterval`) — it's populated once when the Thing is created, and after that only updates when something explicitly asks for it: the `refreshProfile()` action, or a `REFRESH` command sent to any channel on this Thing (e.g. clicking refresh in the UI).
+> If you edit this data in the Tractive app, values here stay stale until one of those happens.
+
 ## Thing Actions
 
-The `dog-6` Thing exposes four actions for use in rules:
+The `dog-6` Thing exposes five actions for use in rules:
 
-| Action                                               | Description                                                                                                  |
-| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `refreshPosition()`                                  | Triggers an immediate refresh of the "Position" channel group, outside the regular polling schedule          |
-| `refreshHealthOverview()`                            | Triggers an immediate refresh of the "Health" and "Dog" channel groups, outside the regular polling schedule |
-| `refreshHardware()`                                  | Triggers an immediate refresh of the "Hardware" channel group, outside the regular polling schedule          |
-| `getPositions(ZonedDateTime from, ZonedDateTime to)` | Fetches historical tracker positions within a time window                                                    |
+| Action                                               | Description                                                                                                                             |
+| ---------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshPosition()`                                  | Triggers an immediate refresh of the "Position" channel group, outside the regular polling schedule                                     |
+| `refreshHealthOverview()`                            | Triggers an immediate refresh of the "Health" and "Dog" channel groups, outside the regular polling schedule                            |
+| `refreshHardware()`                                  | Triggers an immediate refresh of the "Hardware" channel group, outside the regular polling schedule                                     |
+| `refreshProfile()`                                   | Triggers an immediate refresh of the "Profile" channel group — unlike the others, this group is otherwise never refreshed automatically |
+| `getPositions(ZonedDateTime from, ZonedDateTime to)` | Fetches historical tracker positions within a time window                                                                               |
 
 ### `getPositions`
 

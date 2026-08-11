@@ -36,6 +36,7 @@
 			<channel-group id="commands" typeId="commands-group"/>
 			<channel-group id="health" typeId="health-group"/>
 			<channel-group id="dog" typeId="dog-group"/>
+			<channel-group id="profile" typeId="profile-group"/> <!-- NEW -->
 		</channel-groups>
 
 		<config-description>
@@ -75,6 +76,16 @@
 			<channel id="charging-state" typeId="charging-state"/>
 			<channel id="battery-state" typeId="battery-state"/>
 			<channel id="tracker-state" typeId="tracker-state"/>
+			<channel id="zone-type" typeId="zone-type"/>
+			<channel id="tracker-state-reason" typeId="tracker-state-reason"/>
+			<channel id="zone-id" typeId="zone-id"/>
+			<channel id="zone-entered-at" typeId="zone-entered-at"/>
+			<channel id="zone-last-seen-at" typeId="zone-last-seen-at"/>
+			<channel id="power-saving-zone-id" typeId="power-saving-zone-id"/>
+			<channel id="model-number" typeId="model-number"/>
+			<channel id="hw-edition" typeId="hw-edition"/>
+			<channel id="firmware-version" typeId="firmware-version"/>
+			<channel id="geofence-sensitivity" typeId="geofence-sensitivity"/>
 			<channel id="last-contact" typeId="last-contact"/>
 		</channels>
 	</channel-group-type>
@@ -83,8 +94,14 @@
 		<label>Commands</label>
 		<channels>
 			<channel id="buzzer" typeId="buzzer"/>
+			<channel id="buzzer-timeout" typeId="control-timeout"/>
+			<channel id="buzzer-remaining" typeId="control-remaining"/>
 			<channel id="led" typeId="led"/>
+			<channel id="led-timeout" typeId="control-timeout"/>
+			<channel id="led-remaining" typeId="control-remaining"/>
 			<channel id="live-tracking" typeId="live-tracking"/>
+			<channel id="live-tracking-timeout" typeId="control-timeout"/>
+			<channel id="live-tracking-remaining" typeId="control-remaining"/>
 		</channels>
 	</channel-group-type>
 
@@ -108,6 +125,20 @@
 		<label>Dog</label>
 		<channels>
 			<channel id="bark" typeId="bark-status"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="profile-group">
+		<label>Profile</label>
+		<channels>
+			<channel id="breed-ids" typeId="breed-ids"/>
+			<channel id="gender" typeId="gender"/>
+			<channel id="birthday" typeId="birthday"/>
+			<channel id="height" typeId="pet-height"/>
+			<channel id="weight" typeId="pet-weight"/>
+			<channel id="neutered" typeId="neutered"/>
+			<channel id="home-location" typeId="home-location"/>
+			<channel id="last-updated" typeId="profile-last-updated"/>
 		</channels>
 	</channel-group-type>
 
@@ -164,6 +195,13 @@
 		<item-type>String</item-type>
 		<label>Tracker State</label>
 		<description>Operational state of the tracker (e.g. OPERATIONAL)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-type">
+		<item-type>String</item-type>
+		<label>Zone Type</label>
+		<description>Kind of the currently most relevant geofence zone (POWER_SAVING, SAFE, DANGER)</description>
 		<state readOnly="true"/>
 	</channel-type>
 
@@ -302,6 +340,169 @@
 		<item-type>String</item-type>
 		<label>Scratch Status</label>
 		<description>Scratch detection status from health overview (e.g. INFREQUENT, NOT_ENOUGH_DATA_TODAY)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="tracker-state-reason" advanced="true">
+		<item-type>String</item-type>
+		<label>Tracker State Reason</label>
+		<description>Why the tracker's operational state is what it is (e.g. POWER_SAVING, STALE_POSITION)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Zone ID</label>
+		<description>Internal ID of the geofence zone currently most relevant to the tracker's position</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-entered-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Zone Entered At</label>
+		<description>Time the tracker entered its currently most relevant geofence zone</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="zone-last-seen-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Zone Last Seen At</label>
+		<description>Time the tracker was last confirmed still inside its currently most relevant geofence zone</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="power-saving-zone-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Power Saving Zone ID</label>
+		<description>Internal ID of the tracker's configured Power Saving Zone</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="model-number" advanced="true">
+		<item-type>String</item-type>
+		<label>Model Number</label>
+		<description>Tractive hardware model code (e.g. TG6C)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="hw-edition" advanced="true">
+		<item-type>String</item-type>
+		<label>Hardware Edition</label>
+		<description>Hardware color/edition variant of the physical unit (e.g. BROWN-LINES)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="firmware-version" advanced="true">
+		<item-type>String</item-type>
+		<label>Firmware Version</label>
+		<description>Onboard firmware version string</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="geofence-sensitivity" advanced="true">
+		<item-type>String</item-type>
+		<label>Geofence Sensitivity</label>
+		<description>Configured geofence entry/exit detection sensitivity (e.g. HIGH)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="control-timeout" advanced="true">
+		<item-type>Number:Time</item-type>
+		<label>Command Timeout</label>
+		<description>Configured maximum duration this activation is allowed to run before auto-stopping</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+
+	<channel-type id="control-remaining" advanced="true">
+		<item-type>Number:Time</item-type>
+		<label>Command Remaining</label>
+		<description>Seconds left before this activation auto-stops</description>
+		<tags>
+			<tag>Measurement</tag>
+			<tag>Duration</tag>
+		</tags>
+		<state readOnly="true" pattern="%.1f %unit%"/>
+	</channel-type>
+
+	<channel-type id="breed-ids" advanced="true">
+		<item-type>String</item-type>
+		<label>Breed IDs</label>
+		<description>Comma-separated Tractive internal breed-catalog ID(s); not human-readable breed names. Only refreshed at
+			Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="gender" advanced="true">
+		<item-type>String</item-type>
+		<label>Gender</label>
+		<description>The pet's sex (M or F). Only refreshed at Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="birthday" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Birthday</label>
+		<description>The pet's date of birth, as entered in the Tractive app. Only refreshed at Thing setup or via the
+			"Refresh profile" action.</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="pet-height" advanced="true">
+		<item-type>Number:Length</item-type>
+		<label>Height</label>
+		<description>The pet's height, as entered in the Tractive app. Only refreshed at Thing setup or via the "Refresh
+			profile" action.</description>
+		<state readOnly="true" pattern="%.2f %unit%"/>
+	</channel-type>
+
+	<channel-type id="pet-weight" advanced="true">
+		<item-type>Number:Mass</item-type>
+		<label>Weight</label>
+		<description>The pet's weight, as entered in the Tractive app. Only refreshed at Thing setup or via the "Refresh
+			profile" action.</description>
+		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+
+	<channel-type id="neutered" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Neutered</label>
+		<description>Whether the pet is spayed/neutered, as entered in the Tractive app. Only refreshed at Thing setup or via
+			the "Refresh profile" action.</description>
+		<tags>
+			<tag>Status</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="home-location" advanced="true">
+		<item-type>Location</item-type>
+		<label>Home Location</label>
+		<description>The pet's configured home location, as entered in the Tractive app. Only refreshed at Thing setup or via
+			the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-last-updated" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Profile Last Updated</label>
+		<description>Time the Profile channel group was last fetched — at Thing setup or via the "Refresh profile" action,
+			never on the regular polling schedule</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
 		<state readOnly="true"/>
 	</channel-type>
 

@@ -52,6 +52,7 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
     public void handleCommand(ChannelUID channelUID, Command command) {
         if (command instanceof RefreshType) {
             taskTracker.track(scheduler.schedule(this::pollAll, 0, TimeUnit.SECONDS));
+            taskTracker.track(scheduler.schedule(this::refreshProfile, 0, TimeUnit.SECONDS));
             return;
         }
 
@@ -111,7 +112,7 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
         }
         if (json.has(FIELD_HEALTH_ALERTS) && json.get(FIELD_HEALTH_ALERTS).isJsonObject()) {
             JsonObject alerts = json.get(FIELD_HEALTH_ALERTS).getAsJsonObject();
-            if (alerts.has(FIELD_UNSEEN_COUNT) && isLinked(CHANNEL_UNSEEN_HEALTH_ALERTS)) {
+            if (isLinked(CHANNEL_UNSEEN_HEALTH_ALERTS) && alerts.has(FIELD_UNSEEN_COUNT)) {
                 updateState(CHANNEL_UNSEEN_HEALTH_ALERTS, new DecimalType(alerts.get(FIELD_UNSEEN_COUNT).getAsInt()));
             }
         }

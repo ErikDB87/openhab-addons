@@ -27,39 +27,63 @@ class PollGuardTest {
 
     @Test
     void tryAcquireSucceedsOnFirstCall() {
-        PollGuard guard = new PollGuard(1000);
-        assertTrue(guard.tryAcquire());
+        PollGuard<String> guard = new PollGuard<>(1000);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
     }
 
     @Test
-    void tryAcquireFailsWhileAlreadyInProgress() {
-        PollGuard guard = new PollGuard(1000);
-        assertTrue(guard.tryAcquire());
-        assertFalse(guard.tryAcquire());
+    void tryAcquireReportsInProgressWhileAlreadyInProgress() {
+        PollGuard<String> guard = new PollGuard<>(1000);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
+        assertEquals(PollGuard.AcquireResult.IN_PROGRESS, guard.tryAcquire());
     }
 
     @Test
-    void tryAcquireFailsWithinCooldownAfterRelease() {
-        PollGuard guard = new PollGuard(1000);
-        assertTrue(guard.tryAcquire());
+    void tryAcquireReportsCooldownWithinCooldownAfterRelease() {
+        PollGuard<String> guard = new PollGuard<>(1000);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
         guard.release();
-        assertFalse(guard.tryAcquire());
+        assertEquals(PollGuard.AcquireResult.COOLDOWN, guard.tryAcquire());
     }
 
     @Test
     void tryAcquireSucceedsAgainAfterCooldownElapses() throws InterruptedException {
-        PollGuard guard = new PollGuard(20);
-        assertTrue(guard.tryAcquire());
+        PollGuard<String> guard = new PollGuard<>(20);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
         guard.release();
         Thread.sleep(30);
-        assertTrue(guard.tryAcquire());
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
     }
 
     @Test
     void tryAcquireSucceedsImmediatelyAfterReleaseWhenCooldownIsZero() {
-        PollGuard guard = new PollGuard(0);
-        assertTrue(guard.tryAcquire());
+        PollGuard<String> guard = new PollGuard<>(0);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
         guard.release();
-        assertTrue(guard.tryAcquire());
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
+    }
+
+    @Test
+    void getCachedReturnsNullBeforeAnyValueIsSet() {
+        PollGuard<String> guard = new PollGuard<>(1000);
+        assertNull(guard.getCached());
+    }
+
+    @Test
+    void getCachedReturnsLastSetValue() {
+        PollGuard<String> guard = new PollGuard<>(0);
+        guard.setCached("first");
+        assertEquals("first", guard.getCached());
+        guard.setCached("second");
+        assertEquals("second", guard.getCached());
+    }
+
+    @Test
+    void getCacheAgeMsReflectsTimeSinceLastRelease() throws InterruptedException {
+        PollGuard<String> guard = new PollGuard<>(1000);
+        guard.tryAcquire();
+        guard.release();
+        Thread.sleep(30);
+        assertTrue(guard.getCacheAgeMs() >= 30);
     }
 }
