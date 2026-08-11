@@ -36,7 +36,7 @@
 			<channel-group id="commands" typeId="commands-group"/>
 			<channel-group id="health" typeId="health-group"/>
 			<channel-group id="dog" typeId="dog-group"/>
-			<channel-group id="profile" typeId="profile-group"/> <!-- NEW -->
+			<channel-group id="profile" typeId="profile-group"/>
 		</channel-groups>
 
 		<config-description>
@@ -94,14 +94,26 @@
 		<label>Commands</label>
 		<channels>
 			<channel id="buzzer" typeId="buzzer"/>
-			<channel id="buzzer-timeout" typeId="control-timeout"/>
-			<channel id="buzzer-remaining" typeId="control-remaining"/>
+			<channel id="buzzer-timeout" typeId="control-timeout">
+				<label>Buzzer Timeout</label>
+			</channel>
+			<channel id="buzzer-remaining" typeId="control-remaining">
+				<label>Buzzer Remaining</label>
+			</channel>
 			<channel id="led" typeId="led"/>
-			<channel id="led-timeout" typeId="control-timeout"/>
-			<channel id="led-remaining" typeId="control-remaining"/>
+			<channel id="led-timeout" typeId="control-timeout">
+				<label>LED Timeout</label>
+			</channel>
+			<channel id="led-remaining" typeId="control-remaining">
+				<label>LED Remaining</label>
+			</channel>
 			<channel id="live-tracking" typeId="live-tracking"/>
-			<channel id="live-tracking-timeout" typeId="control-timeout"/>
-			<channel id="live-tracking-remaining" typeId="control-remaining"/>
+			<channel id="live-tracking-timeout" typeId="control-timeout">
+				<label>Live Tracking Timeout</label>
+			</channel>
+			<channel id="live-tracking-remaining" typeId="control-remaining">
+				<label>Live Tracking Remaining</label>
+			</channel>
 		</channels>
 	</channel-group-type>
 

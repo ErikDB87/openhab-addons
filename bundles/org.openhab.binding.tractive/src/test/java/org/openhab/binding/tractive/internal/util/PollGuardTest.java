@@ -86,4 +86,23 @@ class PollGuardTest {
         Thread.sleep(30);
         assertTrue(guard.getCacheAgeMs() >= 30);
     }
+
+    @Test
+    void setMinIntervalMsShortensAnAlreadyRunningCooldown() {
+        PollGuard<String> guard = new PollGuard<>(1000);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
+        guard.release();
+        assertEquals(PollGuard.AcquireResult.COOLDOWN, guard.tryAcquire());
+        guard.setMinIntervalMs(0);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
+    }
+
+    @Test
+    void setMinIntervalMsLengthensAnAlreadyRunningCooldown() {
+        PollGuard<String> guard = new PollGuard<>(0);
+        assertEquals(PollGuard.AcquireResult.ACQUIRED, guard.tryAcquire());
+        guard.release();
+        guard.setMinIntervalMs(60_000);
+        assertEquals(PollGuard.AcquireResult.COOLDOWN, guard.tryAcquire());
+    }
 }

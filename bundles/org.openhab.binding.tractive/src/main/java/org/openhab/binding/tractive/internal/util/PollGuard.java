@@ -46,16 +46,24 @@ public class PollGuard<T> {
         COOLDOWN
     }
 
-    private final long minIntervalMs;
+    private volatile long minIntervalMs;
     private final AtomicBoolean inProgress = new AtomicBoolean(false);
     private volatile long lastCompletedMs = 0;
     private volatile @Nullable T cached;
 
     /**
-     * Creates a poll guard that suppresses triggers within {@code minIntervalMs} of the last
-     * completed poll, in addition to preventing concurrent overlap.
+     * Creates a poll guard that suppresses triggers within {@code minIntervalMs} of the last completed poll, in
+     * addition to preventing concurrent overlap. The interval can be changed later via {@link #setMinIntervalMs(long)}.
      */
     public PollGuard(long minIntervalMs) {
+        this.minIntervalMs = minIntervalMs;
+    }
+
+    /**
+     * Changes the minimum interval enforced by {@link #tryAcquire()}. Takes effect on the next call -- it does not
+     * retroactively re-evaluate a cooldown that's already in progress.
+     */
+    public void setMinIntervalMs(long minIntervalMs) {
         this.minIntervalMs = minIntervalMs;
     }
 

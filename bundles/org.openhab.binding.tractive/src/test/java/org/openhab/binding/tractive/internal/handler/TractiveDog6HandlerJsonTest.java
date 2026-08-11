@@ -282,6 +282,62 @@ class TractiveDog6HandlerJsonTest {
     }
 
     @Test
+    void applyPowerSavingZoneIdUsesTopLevelValueWhenPresent() {
+        JsonObject hardware = new JsonObject();
+        hardware.addProperty(TractiveBindingConstants.FIELD_POWER_SAVING_ZONE_ID, "zone-from-hardware");
+        JsonObject event = new JsonObject();
+        event.addProperty(TractiveBindingConstants.FIELD_POWER_SAVING_ZONE_ID, "zone-from-top-level");
+        event.add(TractiveBindingConstants.FIELD_HARDWARE, hardware);
+
+        handler.applyPowerSavingZoneId(event);
+
+        verify(callback).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_POWER_SAVING_ZONE_ID)),
+                eq(new StringType("zone-from-top-level")));
+    }
+
+    @Test
+    void applyPowerSavingZoneIdFallsBackToHardwareWhenTopLevelMissing() {
+        JsonObject hardware = new JsonObject();
+        hardware.addProperty(TractiveBindingConstants.FIELD_POWER_SAVING_ZONE_ID, "zone-from-hardware");
+        JsonObject position = new JsonObject();
+        position.addProperty(TractiveBindingConstants.FIELD_POWER_SAVING_ZONE_ID, "zone-from-position");
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.FIELD_HARDWARE, hardware);
+        event.add(TractiveBindingConstants.FIELD_POSITION, position);
+
+        handler.applyPowerSavingZoneId(event);
+
+        verify(callback).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_POWER_SAVING_ZONE_ID)),
+                eq(new StringType("zone-from-hardware")));
+    }
+
+    @Test
+    void applyPowerSavingZoneIdFallsBackToPositionWhenTopLevelAndHardwareMissing() {
+        JsonObject position = new JsonObject();
+        position.addProperty(TractiveBindingConstants.FIELD_POWER_SAVING_ZONE_ID, "zone-from-position");
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.FIELD_POSITION, position);
+
+        handler.applyPowerSavingZoneId(event);
+
+        verify(callback).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_POWER_SAVING_ZONE_ID)),
+                eq(new StringType("zone-from-position")));
+    }
+
+    @Test
+    void applyPowerSavingZoneIdAbsentEverywhereLeavesChannelUntouched() {
+        JsonObject event = new JsonObject();
+
+        handler.applyPowerSavingZoneId(event);
+
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_POWER_SAVING_ZONE_ID)), any(State.class));
+    }
+
+    @Test
     void onChannelEventTrackerStatusLedControlActiveTrueTurnsLedChannelOn() {
         JsonObject ledControl = new JsonObject();
         ledControl.addProperty(TractiveBindingConstants.FIELD_ACTIVE, true);

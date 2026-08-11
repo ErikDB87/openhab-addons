@@ -66,13 +66,17 @@ It also maintains a persistent real-time event stream that pushes position and h
 
 ### `dog-6` Thing
 
-| Parameter         | Type    | Required | Default | Description                                                                            |
-| ----------------- | ------- | -------- | ------- | -------------------------------------------------------------------------------------- |
-| `trackerId`       | text    | yes      |         | 8-character tracker hardware ID (e.g. `HBDYUFSC`)                                      |
-| `trackedPetId`    | text    | yes      |         | ID of the pet ("trackable object"), linked to this tracker                             |
-| `refreshInterval` | integer | no       | 0       | REST polling interval in seconds; set to 0 to rely solely on real-time channel updates |
+| Parameter         | Type    | Required | Default | Description                                                                                                          |
+| ----------------- | ------- | -------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `trackerId`       | text    | yes      |         | 8-character tracker hardware ID (e.g. `HBDYUFSC`)                                                                    |
+| `trackedPetId`    | text    | yes      |         | ID of the pet ("trackable object"), linked to this tracker                                                           |
+| `refreshInterval` | integer | no       | 0       | REST polling interval in seconds; set to 0 to rely solely on real-time channel updates; low values at your own risk¹ |
 
 Both `trackerId` and `trackedPetId` are filled in automatically when the Thing is created via discovery.
+
+**¹** Setting `refreshInterval` to `0` disables the periodic REST poll loop, but on-demand refreshes (the `refreshPosition()`/`refreshHealthOverview()`/`refreshHardware()` actions) still exist.
+`refreshInterval` also controls the binding's safety against polling too regularly. Setting `refreshInterval` too low (but higher than 0) relaxes that safety, but increases the risk of triggering `HTTP 429` ("Too Many Requests").
+It's possible (but not verified) that being too aggressive might lead to longer-term blocks by Tractive's server.
 
 ## Channels
 
@@ -216,33 +220,59 @@ Bridge tractive:account:gert "Tractive Account" [email="gert@hetdorp.vl", passwo
 ### `tractive.items`
 
 ```java
-Location      samson_Location         "Location"                          ["GeoLocation", "Measurement"] { channel="tractive:dog-6:gert:samson:position#location" }
-DateTime      samson_LastPositionTime "Last Position Update"              ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:position#last-position-time" }
-Number:Speed  samson_Speed            "Speed"                             ["Measurement", "Speed"]       { channel="tractive:dog-6:gert:samson:position#speed", unit="km/h", stateDescription=""[pattern="%.1f %unit%"] }
-String        samson_SensorUsed       "Sensor"                            ["Point"]                      { channel="tractive:dog-6:gert:samson:position#sensor-used" }
-Number:Length samson_Accuracy         "Accuracy"                          ["Point"]                      { channel="tractive:dog-6:gert:samson:position#position-accuracy" }
+Location      samson_Location              "Location"                          ["GeoLocation", "Measurement"] { channel="tractive:dog-6:gert:samson:position#location" }
+DateTime      samson_LastPositionTime      "Last Position Update"              ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:position#last-position-time" }
+Number:Speed  samson_Speed                 "Speed"                             ["Measurement", "Speed"]       { channel="tractive:dog-6:gert:samson:position#speed", unit="km/h" }
+String        samson_SensorUsed            "Sensor"                            ["Point"]                      { channel="tractive:dog-6:gert:samson:position#sensor-used" }
+Number:Length samson_Accuracy              "Accuracy"                          ["Point"]                      { channel="tractive:dog-6:gert:samson:position#position-accuracy" }
 
-Number        samson_BatteryLevel     "Battery"                 <Battery> ["Energy", "Measurement"]      { channel="tractive:dog-6:gert:samson:hardware#battery-level" }
-String        samson_ChargingState    "Charging State"                    ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#charging-state" }
-String        samson_BatteryState     "Battery State"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#battery-state" }
-String        samson_TrackerState     "Tracker State"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#tracker-state" }
-DateTime      samson_LastContact      "Last Contact"                      ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:hardware#last-contact" }
+Number        samson_BatteryLevel          "Battery"                 <Battery> ["Energy", "Measurement"]      { channel="tractive:dog-6:gert:samson:hardware#battery-level" }
+String        samson_ChargingState         "Charging State"                    ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#charging-state" }
+String        samson_BatteryState          "Battery State"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#battery-state" }
+String        samson_TrackerState          "Tracker State"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#tracker-state" }
+String        samson_TrackerStateReason    "State Reason"                      ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#tracker-state-reason" }
+String        samson_ZoneType              "Zone Type"                         ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#zone-type" }
+String        samson_ZoneId                "Zone ID"                           ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#zone-id" }
+DateTime      samson_ZoneEnteredAt         "Zone Entered At"                   ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:hardware#zone-entered-at" }
+DateTime      samson_ZoneLastSeenAt        "Zone Last Seen At"                 ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:hardware#zone-last-seen-at" }
+String        samson_PowerSavingZoneId     "Power Saving Zone ID"              ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#power-saving-zone-id" }
+String        samson_ModelNumber           "Model Number"                      ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#model-number" }
+String        samson_HwEdition             "Hardware Edition"                  ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#hw-edition" }
+String        samson_FirmwareVersion       "Firmware Version"                  ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#firmware-version" }
+String        samson_GeofenceSensitivity   "Geofence Sensitivity"              ["Point"]                      { channel="tractive:dog-6:gert:samson:hardware#geofence-sensitivity" }
+DateTime      samson_LastContact           "Last Contact"                      ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:hardware#last-contact" }
 
-Switch        samson_Buzzer           "Buzzer"                            ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#buzzer" }
-Switch        samson_LED              "LED"                     <light>   ["Control", "Light"]           { channel="tractive:dog-6:gert:samson:commands#led" }
-Switch        samson_LiveTracking     "Live Tracking"                     ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#live-tracking" }
+Switch        samson_Buzzer                "Buzzer"                            ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#buzzer" }
+Number:Time   samson_BuzzerTimeout         "Buzzer Timeout"                    ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:commands#buzzer-timeout" }
+Number:Time   samson_BuzzerRemaining       "Buzzer Remaining"                  ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:commands#buzzer-remaining" }
+Switch        samson_LED                   "LED"                     <light>   ["Control", "Light"]           { channel="tractive:dog-6:gert:samson:commands#led" }
+Number:Time   samson_LedTimeout            "LED Timeout"                       ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:commands#led-timeout" }
+Number:Time   samson_LedRemaining          "LED Remaining"                     ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:commands#led-remaining" }
+Switch        samson_LiveTracking          "Live Tracking"                     ["Control"]                    { channel="tractive:dog-6:gert:samson:commands#live-tracking" }
+Number:Time   samson_LiveTrackingTimeout   "Live Tracking Timeout"             ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:commands#live-tracking-timeout" }
+Number:Time   samson_LiveTrackingRemaining "Live Tracking Remaining"           ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:commands#live-tracking-remaining" }
 
-Number:Time   samson_ActiveTime       "Active"                            ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-recorded", unit="s", stateDescription=""[pattern="%d %unit%"] }
-Number:Time   samson_ActivityGoal     "Goal"                              ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-goal", unit="s", stateDescription=""[pattern="%d %unit%"] }
-Number:Time   samson_SleepDay         "Day Sleep"                         ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-day", unit="s", stateDescription=""[pattern="%d %unit%"] }
-Number:Time   samson_SleepNight       "Night Sleep"                       ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-night", unit="s", stateDescription=""[pattern="%d %unit%"] }
-Number:Time   samson_Calm             "Calm"                              ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-calm", unit="s", stateDescription=""[pattern="%d %unit%"] }
-String        samson_HeartRate        "Heart Rate Status"                 ["Point"]                      { channel="tractive:dog-6:gert:samson:health#resting-heart-rate-status" }
-String        samson_RespRate         "Respiratory Rate Status"           ["Point"]                      { channel="tractive:dog-6:gert:samson:health#resting-respiratory-rate-status" }
-Number        samson_HealthAlerts     "Health Alerts"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:health#unseen-health-alerts" }
-DateTime      samson_ActivitySyncedAt "Activity Synced At"                ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:health#activity-synced-at" }
-String        samson_Bark             "Bark Status"                       ["Point"]                      { channel="tractive:dog-6:gert:samson:dog#bark" }
-String        samson_Scratch          "Scratch Status"                    ["Point"]                      { channel="tractive:dog-6:gert:samson:health#scratch" }
+Number:Time   samson_ActiveTime            "Active"                            ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-recorded", unit="s" }
+Number:Time   samson_ActivityGoal          "Goal"                              ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#activity-goal", unit="s" }
+Number:Time   samson_SleepDay              "Day Sleep"                         ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-day", unit="s" }
+Number:Time   samson_SleepNight            "Night Sleep"                       ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-night", unit="s" }
+Number:Time   samson_Calm                  "Calm"                              ["Duration", "Measurement"]    { channel="tractive:dog-6:gert:samson:health#sleep-calm", unit="s" }
+String        samson_HeartRate             "Heart Rate Status"                 ["Point"]                      { channel="tractive:dog-6:gert:samson:health#resting-heart-rate-status" }
+String        samson_RespRate              "Respiratory Rate Status"           ["Point"]                      { channel="tractive:dog-6:gert:samson:health#resting-respiratory-rate-status" }
+Number        samson_HealthAlerts          "Health Alerts"                     ["Point"]                      { channel="tractive:dog-6:gert:samson:health#unseen-health-alerts" }
+DateTime      samson_ActivitySyncedAt      "Activity Synced At"                ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:health#activity-synced-at" }
+String        samson_Scratch               "Scratch Status"                    ["Point"]                      { channel="tractive:dog-6:gert:samson:health#scratch" }
+
+String        samson_Bark                  "Bark Status"                       ["Point"]                      { channel="tractive:dog-6:gert:samson:dog#bark" }
+
+String        samson_BreedIds              "Breed IDs"                         ["Point"]                      { channel="tractive:dog-6:gert:samson:profile#breed-ids" }
+String        samson_Gender                "Gender"                            ["Point"]                      { channel="tractive:dog-6:gert:samson:profile#gender" }
+DateTime      samson_Birthday              "Birthday"                          ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:profile#birthday" }
+Number:Length samson_Height                "Height"                            ["Point"]                      { channel="tractive:dog-6:gert:samson:profile#height" }
+Number:Mass   samson_Weight                "Weight"                            ["Point"]                      { channel="tractive:dog-6:gert:samson:profile#weight", unit="kg", stateDescription=""[pattern="%.1f %unit%"] }
+Switch        samson_Neutered              "Neutered"                          ["Status"]                     { channel="tractive:dog-6:gert:samson:profile#neutered" }
+Location      samson_HomeLocation          "Home Location"                     ["GeoLocation", "Measurement"] { channel="tractive:dog-6:gert:samson:profile#home-location" }
+DateTime      samson_ProfileLastUpdated    "Profile Last Updated"              ["Point", "Timestamp"]         { channel="tractive:dog-6:gert:samson:profile#last-updated" }
 ```
 
 ### `tractive.rules`

@@ -76,13 +76,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     protected String trackerId = "";
     protected String trackedPetId = "";
 
-    private static final long MIN_POLL_INTERVAL_MS = 30_000;
+    private static final long DEFAULT_MIN_POLL_INTERVAL_MS = 60_000;
 
-    private final PollGuard<JsonObject> trackerDetailsGuard = new PollGuard<>(MIN_POLL_INTERVAL_MS);
-    private final PollGuard<JsonObject> hwReportGuard = new PollGuard<>(MIN_POLL_INTERVAL_MS);
-    private final PollGuard<JsonObject> positionReportGuard = new PollGuard<>(MIN_POLL_INTERVAL_MS);
-    private final PollGuard<JsonObject> healthOverviewGuard = new PollGuard<>(MIN_POLL_INTERVAL_MS);
-    private final PollGuard<JsonObject> profileGuard = new PollGuard<>(MIN_POLL_INTERVAL_MS);
+    private final PollGuard<JsonObject> trackerDetailsGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
+    private final PollGuard<JsonObject> hwReportGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
+    private final PollGuard<JsonObject> positionReportGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
+    private final PollGuard<JsonObject> healthOverviewGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
+    private final PollGuard<JsonObject> profileGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
 
     private volatile boolean powerSaving = false;
     private final Map<String, ScheduledFuture<?>> autoOffTasks = new ConcurrentHashMap<>();
@@ -105,20 +105,20 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         switch (messageType) {
             case MESSAGE_TRACKER_STATUS:
                 updatePowerSavingFlag(event, FIELD_TRACKER_STATE_REASON);
-                updateStringChannel(CHANNEL_TRACKER_STATE_REASON, event, FIELD_TRACKER_STATE_REASON); // NEW
+                updateStringChannel(CHANNEL_TRACKER_STATE_REASON, event, FIELD_TRACKER_STATE_REASON);
                 applyControlState(CHANNEL_LED, event, COMMAND_LED_CONTROL);
                 applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
-                updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL); // NEW
-                updateControlTiming(CHANNEL_BUZZER_TIMEOUT, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL); // NEW
+                updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
+                updateControlTiming(CHANNEL_BUZZER_TIMEOUT, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL);
                 scheduleOrCancelBuzzerAutoOff(event);
                 applyControlState(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
                 updateControlTiming(CHANNEL_LIVE_TRACKING_TIMEOUT, CHANNEL_LIVE_TRACKING_REMAINING, event,
-                        COMMAND_LIVE_TRACKING); // NEW
+                        COMMAND_LIVE_TRACKING);
                 updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE);
                 updateStringChannel(CHANNEL_CHARGING_STATE, event, FIELD_CHARGING_STATE);
                 updateStringChannel(CHANNEL_BATTERY_STATE, event, FIELD_BATTERY_STATE);
-                updateStringChannel(CHANNEL_POWER_SAVING_ZONE_ID, event, FIELD_POWER_SAVING_ZONE_ID);
-                applyPrioritizedZone(event); // NEW
+                applyPowerSavingZoneId(event);
+                applyPrioritizedZone(event);
                 if (event.has(FIELD_POSITION) && event.get(FIELD_POSITION).isJsonObject()) {
                     applyPositionReport(event.get(FIELD_POSITION).getAsJsonObject());
                 }
@@ -153,6 +153,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         TractiveTrackerConfiguration config = getConfigAs(TractiveTrackerConfiguration.class);
         trackerId = config.trackerId;
         trackedPetId = config.trackedPetId;
+
+        long guardIntervalMs = config.refreshInterval > 0 ? config.refreshInterval * 1000L
+                : DEFAULT_MIN_POLL_INTERVAL_MS;
+        trackerDetailsGuard.setMinIntervalMs(guardIntervalMs);
+        hwReportGuard.setMinIntervalMs(guardIntervalMs);
+        positionReportGuard.setMinIntervalMs(guardIntervalMs);
+        healthOverviewGuard.setMinIntervalMs(guardIntervalMs);
 
         if (trackerId.isBlank()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Tracker ID must be configured");
@@ -365,16 +372,16 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         updateStringChannel(CHANNEL_TRACKER_STATE, json, FIELD_TRACKER_STATE);
         updateStringChannel(CHANNEL_CHARGING_STATE, json, FIELD_CHARGING_STATE);
         updateStringChannel(CHANNEL_BATTERY_STATE, json, FIELD_BATTERY_STATE);
-        updateStringChannel(CHANNEL_TRACKER_STATE_REASON, json, FIELD_STATE_REASON); // NEW
-        updateStringChannel(CHANNEL_MODEL_NUMBER, json, FIELD_MODEL_NUMBER); // NEW
-        updateStringChannel(CHANNEL_HW_EDITION, json, FIELD_HW_EDITION); // NEW
-        updateStringChannel(CHANNEL_FIRMWARE_VERSION, json, FIELD_FW_VERSION); // NEW
-        updateStringChannel(CHANNEL_GEOFENCE_SENSITIVITY, json, FIELD_GEOFENCE_SENSITIVITY); // NEW
-        updateStringChannel(CHANNEL_ZONE_ID, json, FIELD_PRIORITIZED_ZONE_ID); // NEW
-        updateStringChannel(CHANNEL_ZONE_TYPE, json, FIELD_PRIORITIZED_ZONE_TYPE); // NEW
-        updateEpochChannel(CHANNEL_ZONE_LAST_SEEN_AT, json, FIELD_PRIORITIZED_ZONE_LAST_SEEN_AT); // NEW
-        updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, json, FIELD_PRIORITIZED_ZONE_ENTERED_AT); // NEW
-        updateStringChannel(CHANNEL_POWER_SAVING_ZONE_ID, json, FIELD_POWER_SAVING_ZONE_ID); // NEW
+        updateStringChannel(CHANNEL_TRACKER_STATE_REASON, json, FIELD_STATE_REASON);
+        updateStringChannel(CHANNEL_MODEL_NUMBER, json, FIELD_MODEL_NUMBER);
+        updateStringChannel(CHANNEL_HW_EDITION, json, FIELD_HW_EDITION);
+        updateStringChannel(CHANNEL_FIRMWARE_VERSION, json, FIELD_FW_VERSION);
+        updateStringChannel(CHANNEL_GEOFENCE_SENSITIVITY, json, FIELD_GEOFENCE_SENSITIVITY);
+        updateStringChannel(CHANNEL_ZONE_ID, json, FIELD_PRIORITIZED_ZONE_ID);
+        updateStringChannel(CHANNEL_ZONE_TYPE, json, FIELD_PRIORITIZED_ZONE_TYPE);
+        updateEpochChannel(CHANNEL_ZONE_LAST_SEEN_AT, json, FIELD_PRIORITIZED_ZONE_LAST_SEEN_AT);
+        updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, json, FIELD_PRIORITIZED_ZONE_ENTERED_AT);
+        updateStringChannel(CHANNEL_POWER_SAVING_ZONE_ID, json, FIELD_POWER_SAVING_ZONE_ID);
         updatePowerSavingFlag(json, FIELD_STATE_REASON);
     }
 
@@ -578,6 +585,29 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         updateStringChannel(CHANNEL_ZONE_TYPE, zone, FIELD_ZONE_TYPE);
         updateEpochChannel(CHANNEL_ZONE_LAST_SEEN_AT, zone, FIELD_ZONE_LAST_SEEN_AT);
         updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, zone, FIELD_ZONE_ENTERED_AT);
+    }
+
+    /**
+     * Updates the Power Saving Zone ID channel from a {@code tracker_status} push. The field appears in up to three
+     * places in the same push (top-level, nested under {@code hardware}, nested under {@code position}) and is not
+     * always present at the top level -- a raw-capture check across 976 real {@code tracker_status} samples found it
+     * present only under {@code hardware} (no top-level copy at all) in ~29% of samples, and wherever more than one
+     * copy is present in the same push, they always agree, so falling back to the nested copies is safe.
+     */
+    protected void applyPowerSavingZoneId(JsonObject event) {
+        if (!isLinked(CHANNEL_POWER_SAVING_ZONE_ID)) {
+            return;
+        }
+        JsonElement el = event.get(FIELD_POWER_SAVING_ZONE_ID);
+        if ((el == null || el.isJsonNull()) && event.has(FIELD_HARDWARE) && event.get(FIELD_HARDWARE).isJsonObject()) {
+            el = event.get(FIELD_HARDWARE).getAsJsonObject().get(FIELD_POWER_SAVING_ZONE_ID);
+        }
+        if ((el == null || el.isJsonNull()) && event.has(FIELD_POSITION) && event.get(FIELD_POSITION).isJsonObject()) {
+            el = event.get(FIELD_POSITION).getAsJsonObject().get(FIELD_POWER_SAVING_ZONE_ID);
+        }
+        if (el != null && !el.isJsonNull()) {
+            updateState(CHANNEL_POWER_SAVING_ZONE_ID, new StringType(el.getAsString()));
+        }
     }
 
     /**
