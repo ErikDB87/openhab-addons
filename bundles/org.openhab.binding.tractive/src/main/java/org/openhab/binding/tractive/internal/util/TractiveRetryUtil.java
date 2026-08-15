@@ -23,6 +23,7 @@ import java.util.function.Supplier;
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jetty.client.api.ContentResponse;
 import org.eclipse.jetty.client.api.Request;
+import org.eclipse.jetty.http.HttpStatus;
 import org.slf4j.Logger;
 
 /**
@@ -61,16 +62,20 @@ public class TractiveRetryUtil {
             ScheduledExecutorService scheduler, Logger logger, int attemptNum) {
         try {
             ContentResponse response = requestFactory.get().send();
-            logger.trace("Attempt {}/{} → HTTP {}", attemptNum, MAX_RETRIES, response.getStatus());
-            if (response.getStatus() != 429 || attemptNum >= MAX_RETRIES) {
-                if (response.getStatus() == 429) {
-                    return CompletableFuture.failedFuture(
-                            new IOException("HTTP 429 rate limit exceeded after " + MAX_RETRIES + " attempts"));
-                }
+            int status = response.getStatus();
+            boolean isRateLimited = status == HttpStatus.TOO_MANY_REQUESTS_429;
+            logger.trace("Attempt {}/{} → HTTP {}{}", attemptNum, MAX_RETRIES, status,
+                    isRateLimited ? "" : " (not 429, no further attempts will be made)");
+            if (!isRateLimited) {
                 return CompletableFuture.completedFuture(response);
             }
+            if (attemptNum >= MAX_RETRIES) {
+                logger.debug("Still rate limited after {} attempts, giving up", MAX_RETRIES);
+                return CompletableFuture.failedFuture(
+                        new IOException("HTTP 429 rate limit exceeded after " + MAX_RETRIES + " attempts"));
+            }
             long delayMs = BASE_DELAY_MS * (1L << (attemptNum - 1));
-            logger.debug("Rate limited (attempt {}), retrying after {}ms", attemptNum, delayMs);
+            logger.debug("Rate limited (attempt {}), retrying after {} ms", attemptNum, delayMs);
             CompletableFuture<ContentResponse> result = new CompletableFuture<>();
             scheduler.schedule((Runnable) () -> attempt(requestFactory, scheduler, logger, attemptNum + 1)
                     .whenComplete((r, ex) -> {

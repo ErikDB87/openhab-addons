@@ -19,10 +19,13 @@ to a required, separate review-log table -- this log contains the REAL
 values, so it must never live under --out.
 
 Two additional outputs are opt-in via CLI flags:
-- --raw-archive appends every extracted sample verbatim and unredacted,
-  tagged with a "tractive-binding-log-source" field describing which
-  log-line format it came from, as JSONL. Same sensitivity as
-  --review-log: must live outside --out, must never be committed or shared.
+- --raw-archive appends every extracted sample verbatim and unredacted, as JSONL rows
+  of {"timestamp", "log-line-type", "payload"}: "timestamp" is parsed from the original
+  binding-log line (e.g. "2026-08-09 11:29:17.225"; null if a line didn't match the
+  expected prefix), "log-line-type" is which log-line format it came from (e.g.
+  "GET <url>", "Channel line"). Same sensitivity as --review-log: must live outside
+  --out, must never be committed or shared. Rotated backups are moved into a "rotated/"
+  subdirectory next to the live file (see rotate_if_too_large()'s rotated_dir parameter).
 - --new-keys-log is overwritten (not appended) on every run with only the
   JSON key paths first discovered in *this* run, empty if none. A separate
   watcher script can alert on it without needing its own dedup logic --
@@ -95,6 +98,12 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 # that only look enum-like at small sample sizes) without hiding genuinely
 # small, meaningful enumerations like status strings.
 ENUM_CAP = 10
+
+# Every binding-log line is prefixed with this timestamp, e.g.:
+#   2026-08-09 11:29:17.225 [TRACE] [internal.handler.TractiveDog6Handler - 891       ] - ...
+# Captured so each --raw-archive row can be traced back to when it happened, not just
+# which log file/line it came from.
+LOG_TIMESTAMP_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})")
 
 # Real log format, confirmed from a live binding log sample:
 #   GET https://graph.tractive.com/4/tracker/FCTPOEBK → {"hw_id":"FCTPOEBK",...}
@@ -186,26 +195,32 @@ ROTATE_MAX_BYTES = 100 * 1024 * 1024
 ROTATE_BACKUP_COUNT = 3
 
 
-def rotate_if_too_large(path, max_bytes=ROTATE_MAX_BYTES, backup_count=ROTATE_BACKUP_COUNT):
+def rotate_if_too_large(path, max_bytes=ROTATE_MAX_BYTES, backup_count=ROTATE_BACKUP_COUNT, rotated_dir=None):
     """logrotate-style numbered rotation: path -> path.1 -> path.2 ... path.N, oldest dropped.
 
     Called before opening `path` in append mode, so a run that would push it past
     max_bytes starts a fresh file instead of appending onto an ever-growing one.
+
+    If `rotated_dir` is given, numbered backups are moved into that directory
+    (created if it doesn't exist yet) instead of sitting next to the live file.
     """
     path = Path(path)
     if not path.exists() or path.stat().st_size < max_bytes:
         return
 
-    oldest = path.with_name(f"{path.name}.{backup_count}")
+    backup_root = Path(rotated_dir) if rotated_dir is not None else path.parent
+    backup_root.mkdir(parents=True, exist_ok=True)
+
+    oldest = backup_root / f"{path.name}.{backup_count}"
     if oldest.exists():
         oldest.unlink()
 
     for i in range(backup_count - 1, 0, -1):
-        src = path.with_name(f"{path.name}.{i}")
+        src = backup_root / f"{path.name}.{i}"
         if src.exists():
-            src.rename(path.with_name(f"{path.name}.{i + 1}"))
+            src.rename(backup_root / f"{path.name}.{i + 1}")
 
-    path.rename(path.with_name(f"{path.name}.1"))
+    path.rename(backup_root / f"{path.name}.1")
 
 
 # ---------------------------------------------------------------------------
@@ -217,6 +232,8 @@ def extract_samples(log_paths):
         with open(log_path, "r", encoding="utf-8", errors="replace") as f:
             for line_num, line in enumerate(f, 1):
                 source = f"{log_path}:{line_num}"
+                ts_match = LOG_TIMESTAMP_RE.match(line)
+                timestamp = ts_match.group(1) if ts_match else None
 
                 m = REST_LINE_RE.search(line)
                 if m:
@@ -224,7 +241,7 @@ def extract_samples(log_paths):
                     payload = try_parse_json(json_text, source)
                     if payload is None:
                         continue
-                    yield normalize_endpoint(url), payload, source, f"GET {url}"
+                    yield normalize_endpoint(url), payload, source, f"GET {url}", timestamp
                     continue
 
                 m = CHANNEL_LINE_RE.search(line)
@@ -236,7 +253,7 @@ def extract_samples(log_paths):
                     if message in ("keep-alive", "handshake"):
                         continue
                     group_key = "channel/_unclassified" if message is None else f"channel/{message}"
-                    yield group_key, payload, source, "Channel line"
+                    yield group_key, payload, source, "Channel line", timestamp
                     continue
 
                 m = TRACKER_LIST_RE.search(line)
@@ -244,7 +261,8 @@ def extract_samples(log_paths):
                     payload = try_parse_json(m.group(1), source)
                     if payload is None:
                         continue
-                    yield "graph.tractive.com/4/user/{objectId}/trackers", payload, source, "Tracker list response"
+                    yield ("graph.tractive.com/4/user/{objectId}/trackers", payload, source,
+                           "Tracker list response", timestamp)
                     continue
 
                 m = TRACKABLE_OBJECTS_LIST_RE.search(line)
@@ -253,7 +271,7 @@ def extract_samples(log_paths):
                     if payload is None:
                         continue
                     yield ("graph.tractive.com/4/user/{objectId}/trackable_objects", payload, source,
-                           "Trackable objects list")
+                           "Trackable objects list", timestamp)
                     continue
 
                 m = TRACKABLE_OBJECT_RE.search(line)
@@ -263,7 +281,7 @@ def extract_samples(log_paths):
                     if payload is None:
                         continue
                     yield ("graph.tractive.com/4/trackable_object/{objectId}", payload, source,
-                           f"Trackable object {pet_id} response")
+                           f"Trackable object {pet_id} response", timestamp)
                     continue
 
                 m = COMMAND_RESPONSE_RE.search(line)
@@ -273,7 +291,7 @@ def extract_samples(log_paths):
                     if payload is None:
                         continue
                     group_key = f"graph.tractive.com/4/tracker/{{trackerId}}/command/{command_name}"
-                    yield group_key, payload, source, f"Command {command_name}/{state}"
+                    yield group_key, payload, source, f"Command {command_name}/{state}", timestamp
 
 
 # ---------------------------------------------------------------------------
@@ -696,8 +714,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tracker-type", required=True, help="e.g. dog-6")
     parser.add_argument("--review-log", required=True, help="Path to append redaction review-log rows to")
-    parser.add_argument("--raw-archive", help="Path to append unredacted {source, payload} JSONL rows to "
-                                               "(must live outside --out, same sensitivity as --review-log)")
+    parser.add_argument("--raw-archive", help="Path to append unredacted {timestamp, log-line-type, payload} "
+                                               "JSONL rows to (must live outside --out, same sensitivity as "
+                                               "--review-log)")
     parser.add_argument("--new-keys-log", help="Path to overwrite with keys first discovered in this run "
                                                 "(empty if none); a separate watcher can alert on it")
     parser.add_argument("log_files", nargs="+")
@@ -708,13 +727,18 @@ def main():
     raw_rows = []
     control_samples = []
 
-    for group_key, payload, source, log_label in extract_samples(args.log_files):
+    for group_key, payload, source, log_label, timestamp in extract_samples(args.log_files):
         groups.setdefault(group_key, []).append((payload, source))
-        raw_rows.append({"tractive-binding-log-source": log_label, "source": source, "payload": payload})
+        raw_rows.append({
+            "timestamp": timestamp,
+            "log-line-type": log_label,
+            "payload": payload,
+        })
 
     if args.raw_archive:
-        rotate_if_too_large(args.raw_archive)
-        with open(args.raw_archive, "a", encoding="utf-8") as f:
+        raw_archive_path = Path(args.raw_archive)
+        rotate_if_too_large(raw_archive_path, rotated_dir=raw_archive_path.parent / "rotated")
+        with open(raw_archive_path, "a", encoding="utf-8") as f:
             for row in raw_rows:
                 f.write(json.dumps(row) + "\n")
 

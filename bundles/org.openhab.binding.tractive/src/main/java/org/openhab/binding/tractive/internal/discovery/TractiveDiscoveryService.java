@@ -115,7 +115,7 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
             Thread.currentThread().interrupt();
             return null;
         } catch (ExecutionException | RuntimeException e) {
-            logger.debug("{} failed: {}", logContext, e.getMessage());
+            logger.warn("{} failed: {}", logContext, e.getMessage());
             return null;
         }
     }
@@ -212,7 +212,7 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
             return "";
         }
         if (response.getStatus() != HttpStatus.OK_200) {
-            logger.debug("Tracker details for {} returned HTTP {}", trackerId, response.getStatus());
+            logger.warn("Tracker details for {} returned HTTP {}", trackerId, response.getStatus());
             return "";
         }
         JsonElement parsed = JsonParser.parseString(response.getContentAsString());
@@ -242,7 +242,7 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
             return null;
         }
         if (response.getStatus() != HttpStatus.OK_200) {
-            logger.debug("Tracker list returned HTTP {}", response.getStatus());
+            logger.warn("Tracker list returned HTTP {}", response.getStatus());
             return null;
         }
         logger.trace("Tracker list response: {}", response.getContentAsString());
@@ -254,7 +254,11 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
         Map<String, PetInfo> result = new HashMap<>();
         String listUrl = API_BASE_URL + "user/" + userId + "/trackable_objects";
         ContentResponse listResponse = fetchGet(bridge, httpClient, listUrl, "Fetch trackable objects list");
-        if (listResponse == null || listResponse.getStatus() != HttpStatus.OK_200) {
+        if (listResponse == null) {
+            return result;
+        }
+        if (listResponse.getStatus() != HttpStatus.OK_200) {
+            logger.warn("Trackable objects list returned HTTP {}", listResponse.getStatus());
             return result;
         }
         logger.trace("Trackable objects list: {}", listResponse.getContentAsString());

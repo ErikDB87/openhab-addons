@@ -18,12 +18,14 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jdt.annotation.Nullable;
@@ -34,6 +36,7 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.openhab.binding.tractive.internal.channel.TractiveEventListener;
 import org.openhab.binding.tractive.internal.config.TractiveTrackerConfiguration;
 import org.openhab.binding.tractive.internal.util.PollGuard;
+import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.binding.tractive.internal.util.TractiveRetryUtil;
 import org.openhab.binding.tractive.internal.util.TractiveTaskTracker;
 import org.openhab.core.library.types.DateTimeType;
@@ -76,12 +79,31 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     protected String trackerId = "";
     protected String trackedPetId = "";
 
-    private static final long DEFAULT_MIN_POLL_INTERVAL_MS = 60_000;
+    private static final long DEFAULT_MIN_POLL_INTERVAL_MS = 10_000;
 
     private final PollGuard<JsonObject> trackerDetailsGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
     private final PollGuard<JsonObject> hwReportGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
     private final PollGuard<JsonObject> positionReportGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
+    /**
+     * Shares {@code guardIntervalMs} with the three {@code graph.tractive.com}-backed guards above in
+     * {@link #initialize()}, but, unlike them, is never plugged into {@link #tryConsumeSharedBudget}:
+     * {@link #pollHealthOverview(TractiveAccountHandler)} hits {@code aps-api.tractive.com}, a separate host with its
+     * own separate rate-limit budget that {@link SharedRateLimitBucket} deliberately doesn't model. Measurements in
+     * {@code doc/rate-limit-probes/README.md} suggest that host may be limited by concurrent in-flight requests rather
+     * than sustained rate, unlike {@code graph.tractive.com}'s token-bucket behavior -- clean at every sequential
+     * spacing tested (including roughly 10 calls/second sustained), but failing once requests became simultaneous.
+     * Since this guard's own {@code IN_PROGRESS} check already prevents more than one in-flight request to this
+     * endpoint at a time, sharing the poll interval with the other three guards is believed low-risk even without a
+     * bucket of its own -- but that's a read of limited evidence, not a confirmed mechanism, and this host has no
+     * {@link SharedRateLimitBucket} equivalent to fall back on if the read turns out wrong.
+     */
     private final PollGuard<JsonObject> healthOverviewGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
+    /**
+     * Deliberately not re-tuned to {@code config.refreshInterval} in {@link #initialize()}, unlike its four siblings
+     * above. {@link #pollProfile(TractiveAccountHandler)} is off the periodic poll schedule entirely: profile data
+     * barely changes, so it's only fetched once at startup, via the {@code refreshProfile()} action, or on a
+     * {@code REFRESH} command. Stays pinned to {@link #DEFAULT_MIN_POLL_INTERVAL_MS} unconditionally.
+     */
     private final PollGuard<JsonObject> profileGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
 
     private volatile boolean powerSaving = false;
@@ -151,8 +173,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     @Override
     public void initialize() {
         TractiveTrackerConfiguration config = getConfigAs(TractiveTrackerConfiguration.class);
-        trackerId = config.trackerId;
-        trackedPetId = config.trackedPetId;
+        trackerId = config.trackerId.trim().toUpperCase(Locale.ROOT);
+        trackedPetId = config.trackedPetId.trim();
 
         long guardIntervalMs = config.refreshInterval > 0 ? config.refreshInterval * 1000L
                 : DEFAULT_MIN_POLL_INTERVAL_MS;
@@ -202,9 +224,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
         } else if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
             updateStatus(ThingStatus.UNKNOWN);
+            TractiveAccountHandler bridge = getAccountHandler();
             taskTracker.track(scheduler.schedule(() -> {
                 try {
                     pollAll();
+                    if (bridge != null && profileGuard.getCached() == null) {
+                        pollProfile(bridge);
+                    }
                     updateStatus(ThingStatus.ONLINE);
                 } catch (RuntimeException e) {
                     updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
@@ -251,8 +277,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     /**
      * Sends a tracker command. Tractive commands use GET, not POST.
      * Failures are logged at DEBUG and silently swallowed; commands are best-effort.
+     * Consumes a token from the shared {@code graph.tractive.com} rate-limit bucket if one is available, purely to keep
+     * its internal accounting honest about traffic -- deliberately never gated on the result, since commands are
+     * best-effort and shouldn't be silently dropped by the binding's bookkeeping.
      */
     protected void sendCommand(HttpClient httpClient, TractiveAccountHandler bridge, String commandName, String state) {
+        bridge.getGraphApiRateLimitBucket().tryConsume();
         String url = API_BASE_URL + "tracker/" + trackerId + "/command/" + commandName + "/" + state;
         ContentResponse response = sendGetWithReauth(bridge, httpClient, url, "Command " + commandName + "/" + state);
         if (response == null) {
@@ -296,6 +326,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     /**
      * Fetches historical positions for this tracker between two instants.
      *
+     * Consumes a token from the shared {@code graph.tractive.com} rate-limit bucket if one is available, purely to keep
+     * its internal accounting honest about traffic -- deliberately never gated on the result.
+     *
      * @return the raw JSON array string, or {@code null} on any HTTP or parse error
      */
     public @Nullable String fetchPositions(ZonedDateTime from, ZonedDateTime to) {
@@ -303,10 +336,22 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (bridge == null) {
             return null;
         }
+        bridge.getGraphApiRateLimitBucket().tryConsume();
         String url = API_BASE_URL + "tracker/" + trackerId + "/positions?time_from=" + from.toEpochSecond()
                 + "&time_to=" + to.toEpochSecond() + "&format=json";
-        ContentResponse response = executeGet(bridge, url);
-        return response != null ? response.getContentAsString() : null;
+        ContentResponse response = sendGetWithReauth(bridge, bridge.getHttpClient(), url, "fetchPositions");
+        if (response == null) {
+            logger.warn("fetchPositions({}, {}) could not be completed (see DEBUG log for the cause)", from, to);
+            return null;
+        }
+        if (response.getStatus() != HttpStatus.OK_200) {
+            logger.warn("fetchPositions({}, {}) returned HTTP {}", from, to, response.getStatus());
+            return null;
+        }
+        if (isLinked(CHANNEL_LAST_CONTACT)) {
+            updateState(CHANNEL_LAST_CONTACT, new DateTimeType());
+        }
+        return response.getContentAsString();
     }
 
     /**
@@ -334,6 +379,31 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
+     * Consumes one token from the bridge's shared {@code graph.tractive.com} rate-limit bucket (see
+     * {@link SharedRateLimitBucket}). If none is available, releases {@code guard} (so a later attempt isn't blocked by
+     * an in-progress/cooldown state for a call that never happened) and re-applies its cached response, if any -- the
+     * same treatment as a {@link PollGuard.AcquireResult#COOLDOWN} skip, just triggered by the shared account-level
+     * budget instead of this endpoint's own interval.
+     *
+     * @return {@code true} if a token was consumed and the caller should proceed with the actual HTTP call
+     */
+    private boolean tryConsumeSharedBudget(TractiveAccountHandler bridge, PollGuard<JsonObject> guard,
+            Consumer<JsonObject> applyCached, String logContext) {
+        if (bridge.getGraphApiRateLimitBucket().tryConsume()) {
+            return true;
+        }
+        guard.release();
+        JsonObject cached = guard.getCached();
+        if (cached != null) {
+            logger.debug("{} skipped (shared rate-limit bucket empty): re-applying cached response", logContext);
+            applyCached.accept(cached);
+        } else {
+            logger.debug("{} skipped (shared rate-limit bucket empty), no cached response to re-apply", logContext);
+        }
+        return false;
+    }
+
+    /**
      * Polls tracker details and updates the hardware state channels. On {@link PollGuard.AcquireResult#COOLDOWN},
      * re-applies the cached response instead of doing nothing; on {@link PollGuard.AcquireResult#IN_PROGRESS}, a fresh
      * response is already in flight, so the cache is left untouched.
@@ -351,6 +421,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         }
         if (result == PollGuard.AcquireResult.IN_PROGRESS) {
             logger.trace("Skipping tracker details poll: already in progress");
+            return;
+        }
+        if (!tryConsumeSharedBudget(bridge, trackerDetailsGuard, this::applyTrackerDetails, "Tracker details poll")) {
             return;
         }
         try {
@@ -405,6 +478,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.trace("Skipping hw report poll: already in progress");
             return;
         }
+        if (!tryConsumeSharedBudget(bridge, hwReportGuard, this::applyHwReport, "Hw report poll")) {
+            return;
+        }
         try {
             JsonObject json = getJson(bridge, API_BASE_URL + "device_hw_report/" + trackerId + "/");
             if (json != null) {
@@ -434,6 +510,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         }
         if (result == PollGuard.AcquireResult.IN_PROGRESS) {
             logger.trace("Skipping position report poll: already in progress");
+            return;
+        }
+        if (!tryConsumeSharedBudget(bridge, positionReportGuard, this::applyPositionReport, "Position report poll")) {
             return;
         }
         try {
@@ -727,6 +806,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         }
         if (result == PollGuard.AcquireResult.IN_PROGRESS) {
             logger.trace("Skipping profile poll: already in progress");
+            return;
+        }
+        if (!tryConsumeSharedBudget(bridge, profileGuard, this::applyProfile, "Profile poll")) {
             return;
         }
         try {

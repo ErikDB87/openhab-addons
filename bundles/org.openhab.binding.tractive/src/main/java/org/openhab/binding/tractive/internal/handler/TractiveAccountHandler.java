@@ -39,6 +39,7 @@ import org.openhab.binding.tractive.internal.channel.TractiveEventListener;
 import org.openhab.binding.tractive.internal.channel.TractiveKeepAliveTimeoutException;
 import org.openhab.binding.tractive.internal.config.TractiveAccountConfiguration;
 import org.openhab.binding.tractive.internal.discovery.TractiveDiscoveryService;
+import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.binding.tractive.internal.util.TractiveTaskTracker;
 import org.openhab.core.thing.Bridge;
 import org.openhab.core.thing.ChannelUID;
@@ -83,6 +84,27 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private long channelReconnectDelaySeconds = CHANNEL_RECONNECT_INITIAL_DELAY_S;
 
     private volatile @Nullable TractiveDiscoveryService discoveryService;
+
+    /**
+     * Maximum tokens available at once in the shared {@code graph.tractive.com} rate-limit bucket. Real
+     * measurements: escalating concurrent bursts against {@code GET tracker/{trackerId}} -- 2/4/8 concurrent calls all
+     * clean, 14 concurrent got 4/14 failures. Set to 8, the largest burst directly observed 100% clean, not the ~10 a
+     * token-bucket model infers from the (already-failing) 14-call burst -- the more conservative number to build a
+     * real limit on.
+     */
+    private static final double GRAPH_API_BUCKET_CAPACITY = 8.0;
+
+    /**
+     * Tokens regained per second while the bucket is below capacity, i.e. roughly one token every 6.7 s.
+     * Real measurements bracket the true refill rate to approximately 0.15-0.23 tokens/s, converging from two
+     * independent experiments -- recovery time after a deliberate trigger, and the spacing needed between sequential
+     * calls to avoid triggering one at all. 0.15 is the conservative (slower-refilling) end of that range, not the
+     * midpoint or upper bound.
+     */
+    private static final double GRAPH_API_BUCKET_REFILL_PER_SECOND = 0.15;
+
+    private final SharedRateLimitBucket graphApiRateLimitBucket = new SharedRateLimitBucket(GRAPH_API_BUCKET_CAPACITY,
+            GRAPH_API_BUCKET_REFILL_PER_SECOND);
 
     private final Object authLock = new Object();
 
@@ -341,6 +363,13 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
      */
     public HttpClient getHttpClient() {
         return httpClient;
+    }
+
+    /**
+     * Returns the shared rate-limit bucket modeling {@code graph.tractive.com}'s account-level request budget.
+     */
+    public SharedRateLimitBucket getGraphApiRateLimitBucket() {
+        return graphApiRateLimitBucket;
     }
 
     /**

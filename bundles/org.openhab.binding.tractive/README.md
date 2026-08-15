@@ -75,7 +75,7 @@ It also maintains a persistent real-time event stream that pushes position and h
 Both `trackerId` and `trackedPetId` are filled in automatically when the Thing is created via discovery.
 
 **¹** Setting `refreshInterval` to `0` disables the periodic REST poll loop, but on-demand refreshes (the `refreshPosition()`/`refreshHealthOverview()`/`refreshHardware()` actions) still exist.
-`refreshInterval` also controls the binding's safety against polling too regularly. Setting `refreshInterval` too low (but higher than 0) relaxes that safety, but increases the risk of triggering `HTTP 429` ("Too Many Requests").
+`refreshInterval` also controls the binding's safety against polling too regularly. Setting `refreshInterval` lower than 60 relaxes that safety, but increases the risk of triggering `HTTP 429` ("Too Many Requests").
 It's possible (but not verified) that being too aggressive might lead to longer-term blocks by Tractive's server.
 
 ## Channels
@@ -185,6 +185,9 @@ The `dog-6` Thing exposes five actions for use in rules:
 | `refreshHardware()`                                  | Triggers an immediate refresh of the "Hardware" channel group, outside the regular polling schedule                                     |
 | `refreshProfile()`                                   | Triggers an immediate refresh of the "Profile" channel group — unlike the others, this group is otherwise never refreshed automatically |
 | `getPositions(ZonedDateTime from, ZonedDateTime to)` | Fetches historical tracker positions within a time window                                                                               |
+
+> **Note:** The binding has a safety against polling too frequently.
+> If the same action is called within 60 seconds of the previous (or less, if you set `refreshInterval` to less than 60), the cached data from the previous call are rused.
 
 ### `getPositions`
 

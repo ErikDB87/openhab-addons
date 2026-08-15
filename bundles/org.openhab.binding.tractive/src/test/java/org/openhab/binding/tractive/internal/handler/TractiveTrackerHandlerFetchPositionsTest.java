@@ -34,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -83,6 +84,7 @@ class TractiveTrackerHandlerFetchPositionsTest {
         lenient().when(thing.getUID()).thenReturn(THING_UID);
         lenient().when(callback.isChannelLinked(any())).thenReturn(true);
         lenient().when(bridge.getHttpClient()).thenReturn(httpClient);
+        lenient().when(bridge.getGraphApiRateLimitBucket()).thenReturn(new SharedRateLimitBucket(100, 0.0));
         lenient().when(httpClient.newRequest(anyString())).thenReturn(request);
         lenient().when(request.method(HttpMethod.GET)).thenReturn(request);
         lenient().when(bridge.addAuthHeaders(request)).thenReturn(request);
