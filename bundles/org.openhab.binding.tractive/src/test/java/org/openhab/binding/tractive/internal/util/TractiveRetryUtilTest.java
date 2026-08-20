@@ -68,7 +68,8 @@ class TractiveRetryUtilTest {
         Request request = mock(Request.class);
         when(request.send()).thenReturn(response);
 
-        CompletableFuture<ContentResponse> future = TractiveRetryUtil.sendWithRetry(() -> request, scheduler, logger);
+        CompletableFuture<ContentResponse> future = TractiveRetryUtil.sendWithRetry(() -> request, scheduler, logger,
+                null);
 
         assertSame(response, future.get());
         verify(scheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
@@ -88,7 +89,7 @@ class TractiveRetryUtilTest {
         Queue<Request> requests = new LinkedList<>(List.of(req1, req2));
 
         CompletableFuture<ContentResponse> future = TractiveRetryUtil
-                .sendWithRetry(() -> Objects.requireNonNull(requests.poll()), scheduler, logger);
+                .sendWithRetry(() -> Objects.requireNonNull(requests.poll()), scheduler, logger, null);
 
         assertSame(r200, future.get());
     }
@@ -100,9 +101,37 @@ class TractiveRetryUtilTest {
         Request request = mock(Request.class);
         when(request.send()).thenReturn(r429);
 
-        CompletableFuture<ContentResponse> future = TractiveRetryUtil.sendWithRetry(() -> request, scheduler, logger);
+        CompletableFuture<ContentResponse> future = TractiveRetryUtil.sendWithRetry(() -> request, scheduler, logger,
+                null);
 
         ExecutionException ex = assertThrows(ExecutionException.class, future::get);
         assertInstanceOf(IOException.class, ex.getCause());
+    }
+
+    @Test
+    void a429DepletesTheSharedBucketWhenOneIsProvided() throws Exception {
+        ContentResponse r429 = mock(ContentResponse.class);
+        when(r429.getStatus()).thenReturn(429);
+        Request request = mock(Request.class);
+        when(request.send()).thenReturn(r429);
+        SharedRateLimitBucket sharedBucket = new SharedRateLimitBucket(5, 0.0);
+
+        assertThrows(ExecutionException.class,
+                () -> TractiveRetryUtil.sendWithRetry(() -> request, scheduler, logger, sharedBucket).get());
+
+        assertFalse(sharedBucket.tryConsume());
+    }
+
+    @Test
+    void successDoesNotDepleteTheSharedBucket() throws Exception {
+        ContentResponse response = mock(ContentResponse.class);
+        when(response.getStatus()).thenReturn(200);
+        Request request = mock(Request.class);
+        when(request.send()).thenReturn(response);
+        SharedRateLimitBucket sharedBucket = new SharedRateLimitBucket(1, 0.0);
+
+        TractiveRetryUtil.sendWithRetry(() -> request, scheduler, logger, sharedBucket).get();
+
+        assertTrue(sharedBucket.tryConsume());
     }
 }

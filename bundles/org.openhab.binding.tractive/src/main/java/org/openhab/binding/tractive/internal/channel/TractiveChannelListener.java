@@ -31,6 +31,7 @@ import org.eclipse.jetty.client.HttpClient;
 import org.eclipse.jetty.client.api.Response;
 import org.eclipse.jetty.client.util.InputStreamResponseListener;
 import org.eclipse.jetty.http.HttpMethod;
+import org.eclipse.jetty.http.HttpStatus;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -85,7 +86,10 @@ public class TractiveChannelListener {
         } catch (ExecutionException e) {
             throw new IOException("Channel connect failed: " + e.getMessage(), e);
         }
-        if (response.getStatus() != 200) {
+        if (response.getStatus() == HttpStatus.UNAUTHORIZED_401 || response.getStatus() == HttpStatus.FORBIDDEN_403) {
+            throw new TractiveChannelAuthException("Channel connect failed with HTTP " + response.getStatus());
+        }
+        if (response.getStatus() != HttpStatus.OK_200) {
             throw new IOException("Channel connect failed with HTTP " + response.getStatus());
         }
         logger.trace("Channel connected");

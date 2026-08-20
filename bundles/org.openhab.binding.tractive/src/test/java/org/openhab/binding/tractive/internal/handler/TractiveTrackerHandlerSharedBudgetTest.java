@@ -54,6 +54,12 @@ import org.openhab.core.thing.binding.ThingHandlerCallback;
  * reflectively zeroed in {@link #setUp()} -- the same private-field-injection pattern already used by
  * {@code TractiveDog6HandlerJsonTest} for its mocked scheduler.
  *
+ * Since {@code initialize()} is never called here either, {@code recurringPollEnabled} also defaults to
+ * {@code false} -- which, since 2026-08-18, makes {@code tryConsumeSharedBudget} bypass the shared-budget gate
+ * entirely (the "no recurring cycle to retry a skipped call on" treatment {@code sendCommand}/{@code
+ * fetchPositions} already used). These tests are specifically about that gate, so {@code recurringPollEnabled}
+ * is reflectively forced to {@code true} in {@link #setUp()} the same way, to restore the behavior under test.
+ *
  * @author Erik De Boeck - Initial contribution
  */
 @NonNullByDefault
@@ -103,6 +109,10 @@ class TractiveTrackerHandlerSharedBudgetTest {
         guardField.setAccessible(true);
         PollGuard<?> guard = (PollGuard<?>) Objects.requireNonNull(guardField.get(handler));
         guard.setMinIntervalMs(0);
+
+        Field recurringPollEnabledField = TractiveTrackerHandler.class.getDeclaredField("recurringPollEnabled");
+        recurringPollEnabledField.setAccessible(true);
+        recurringPollEnabledField.set(handler, true);
     }
 
     @Test

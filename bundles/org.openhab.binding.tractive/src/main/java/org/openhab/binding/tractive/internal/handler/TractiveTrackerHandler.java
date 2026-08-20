@@ -48,6 +48,7 @@ import org.openhab.core.library.types.StringType;
 import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.library.unit.Units;
 import org.openhab.core.thing.Bridge;
+import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
@@ -108,6 +109,15 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
 
     private volatile boolean powerSaving = false;
     private final Map<String, ScheduledFuture<?>> autoOffTasks = new ConcurrentHashMap<>();
+    private volatile boolean recurringPollEnabled;
+    private volatile @Nullable Long lastAppliedPositionTime;
+    private volatile @Nullable Long lastAppliedHwTime;
+    private volatile @Nullable Instant lastAppliedHealthSyncedAt;
+    private volatile boolean positionGroupLinked;
+    private volatile boolean healthOverviewLinked;
+
+    private static final String[] POSITION_GROUP_CHANNEL_IDS = { CHANNEL_LOCATION, CHANNEL_LAST_POSITION_TIME,
+            CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY };
 
     /**
      * Creates a new tracker handler for the given thing.
@@ -143,6 +153,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 applyPrioritizedZone(event);
                 if (event.has(FIELD_POSITION) && event.get(FIELD_POSITION).isJsonObject()) {
                     applyPositionReport(event.get(FIELD_POSITION).getAsJsonObject());
+                    Long positionTime = lastAppliedPositionTime;
+                    if (isLinked(CHANNEL_ZONE_LAST_SEEN_AT) && positionTime != null && event.has(FIELD_PRIORITIZED_ZONE)
+                            && event.get(FIELD_PRIORITIZED_ZONE).isJsonObject()) {
+                        updateState(CHANNEL_ZONE_LAST_SEEN_AT,
+                                new DateTimeType(Instant.ofEpochSecond(positionTime).atZone(ZoneId.systemDefault())));
+                    }
                 }
                 if (event.has(FIELD_HARDWARE) && event.get(FIELD_HARDWARE).isJsonObject()) {
                     applyHwReport(event.get(FIELD_HARDWARE).getAsJsonObject());
@@ -150,7 +166,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 break;
             case MESSAGE_HEALTH_OVERVIEW:
                 if (event.has(FIELD_CONTENT) && event.get(FIELD_CONTENT).isJsonObject()) {
-                    applyHealthOverview(event.get(FIELD_CONTENT).getAsJsonObject());
+                    applyHealthOverviewIfNewer(event.get(FIELD_CONTENT).getAsJsonObject());
                 }
                 break;
             case MESSAGE_START_FAILED:
@@ -178,10 +194,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
 
         long guardIntervalMs = config.refreshInterval > 0 ? config.refreshInterval * 1000L
                 : DEFAULT_MIN_POLL_INTERVAL_MS;
+        recurringPollEnabled = config.refreshInterval > 0;
         trackerDetailsGuard.setMinIntervalMs(guardIntervalMs);
         hwReportGuard.setMinIntervalMs(guardIntervalMs);
         positionReportGuard.setMinIntervalMs(guardIntervalMs);
         healthOverviewGuard.setMinIntervalMs(guardIntervalMs);
+
+        positionGroupLinked = isAnyPositionChannelLinked();
+        healthOverviewLinked = isAnyHealthOverviewChannelLinked();
 
         if (trackerId.isBlank()) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Tracker ID must be configured");
@@ -193,7 +213,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
 
-        updateStatus(ThingStatus.UNKNOWN);
+        updateStatus(ThingStatus.UNKNOWN, ThingStatusDetail.NOT_YET_READY);
 
         TractiveAccountHandler bridge = getAccountHandler();
         if (bridge == null) {
@@ -204,9 +224,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
 
         taskTracker.track(scheduler.schedule(() -> {
             try {
-                pollAll();
-                pollProfile(bridge);
-                updateStatus(ThingStatus.ONLINE);
+                if (bridge.getAccessToken() != null) {
+                    pollTrackerDetails(bridge);
+                    pollAll();
+                    pollProfile(bridge);
+                    updateStatus(ThingStatus.ONLINE);
+                }
                 if (config.refreshInterval > 0) {
                     taskTracker.track(scheduler.scheduleWithFixedDelay(this::pollAll, config.refreshInterval,
                             config.refreshInterval, TimeUnit.SECONDS));
@@ -220,16 +243,19 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
 
     @Override
     public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
-        if (bridgeStatusInfo.getStatus() == ThingStatus.OFFLINE) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
-        } else if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
-            updateStatus(ThingStatus.UNKNOWN);
+        if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
+            updateStatus(ThingStatus.UNKNOWN, ThingStatusDetail.NOT_YET_READY);
             TractiveAccountHandler bridge = getAccountHandler();
             taskTracker.track(scheduler.schedule(() -> {
                 try {
                     pollAll();
-                    if (bridge != null && profileGuard.getCached() == null) {
-                        pollProfile(bridge);
+                    if (bridge != null) {
+                        if (trackerDetailsGuard.getCached() == null) {
+                            pollTrackerDetails(bridge);
+                        }
+                        if (profileGuard.getCached() == null) {
+                            pollProfile(bridge);
+                        }
                     }
                     updateStatus(ThingStatus.ONLINE);
                 } catch (RuntimeException e) {
@@ -237,6 +263,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                             "Unexpected error during refresh: " + e.getMessage());
                 }
             }, 0, TimeUnit.SECONDS));
+        } else {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
         }
     }
 
@@ -251,6 +279,97 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
+     * Maintains {@link #positionGroupLinked}/{@link #healthOverviewLinked}: unlike {@link #isLinked}, a per-channel
+     * check on the framework's link registry, these are cached so {@link #pollPositionReport}/{@link
+     * #pollHealthOverview} can skip their entire REST call and what follows on the recurring poll without a registry
+     * lookup on every tick. {@link #channelLinked} always fires for every pre-existing link when the handler
+     * initializes, as well as for every later new link, so the cache always starts correct and stays correct without a
+     * separate startup sweep.
+     */
+    @Override
+    public void channelLinked(ChannelUID channelUID) {
+        super.channelLinked(channelUID);
+        if (containsChannel(POSITION_GROUP_CHANNEL_IDS, channelUID)) {
+            positionGroupLinked = true;
+        } else if (containsChannel(getHealthOverviewChannelIds(), channelUID)) {
+            healthOverviewLinked = true;
+        }
+    }
+
+    /**
+     * See {@link #channelLinked}. Losing one link doesn't mean every channel {@link #pollPositionReport}/{@link
+     * #pollHealthOverview} could write should stop being polled -- rechecks whether any other one is still linked.
+     * This {@link #isLinked} recheck only ever runs in response to a real unlink event, not on every poll tick.
+     */
+    @Override
+    public void channelUnlinked(ChannelUID channelUID) {
+        super.channelUnlinked(channelUID);
+        if (containsChannel(POSITION_GROUP_CHANNEL_IDS, channelUID)) {
+            positionGroupLinked = isAnyPositionChannelLinked();
+        } else if (containsChannel(getHealthOverviewChannelIds(), channelUID)) {
+            healthOverviewLinked = isAnyHealthOverviewChannelLinked();
+        }
+    }
+
+    /**
+     * Whether {@code channelUID} is one of the given channel IDs. Used by {@link #channelLinked}/{@link
+     * #channelUnlinked} to tell which cached flag a just-(un)linked channel affects, by checking membership in the
+     * same per-model channel-ID list {@link #isAnyPositionChannelLinked}/{@link #isAnyHealthOverviewChannelLinked}
+     * already poll against -- not any notion of openHAB channel *group* names. That distinction matters: {@link
+     * #getHealthOverviewChannelIds} is deliberately named after the {@code health_overview} payload it comes from,
+     * not after a channel group, since (for the Dog 6) its channels actually span two real groups -- most from
+     * {@code health}, but {@code bark} from the separate {@code dog} group -- so a name like "health group channel
+     * IDs" would misdescribe its own contents.
+     */
+    private static boolean containsChannel(String[] channelIds, ChannelUID channelUID) {
+        String id = channelUID.getId();
+        for (String channelId : channelIds) {
+            if (channelId.equals(id)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isAnyPositionChannelLinked() {
+        return isAnyChannelLinked(POSITION_GROUP_CHANNEL_IDS);
+    }
+
+    /**
+     * Whether any channel populated by {@link #applyHealthOverview} is linked -- skips the whole REST call when
+     * nothing is, mirroring the same-purpose checks for the other poll methods. The channel set itself comes from
+     * the abstract {@link #getHealthOverviewChannelIds}, for the same reason {@link #applyHealthOverview} is
+     * abstract: it differs from tracker type to tracker type. The linking check itself doesn't differ between
+     * models, so unlike {@code applyHealthOverview}, only the data is abstracted here, not the behavior.
+     */
+    private boolean isAnyHealthOverviewChannelLinked() {
+        return isAnyChannelLinked(getHealthOverviewChannelIds());
+    }
+
+    /**
+     * Returns {@code true} if any of the given channel IDs currently has an Item linked to it.
+     */
+    private boolean isAnyChannelLinked(String[] channelIds) {
+        for (String channelId : channelIds) {
+            if (isLinked(channelId)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The channel IDs {@link #applyHealthOverview} populates, backing {@link #isAnyHealthOverviewChannelLinked} and,
+     * via {@link #containsChannel}, {@link #channelLinked}/{@link #channelUnlinked}. Abstract for the same reason
+     * {@link #applyHealthOverview} is: the actual channel set -- and which openHAB channel-group ID(s) it spans --
+     * differs from tracker type to tracker type, and this base class no longer needs to know that shape at all.
+     * Deliberately named after the {@code health_overview} data source, not a channel group: for the Dog 6 the
+     * returned set spans both the {@code health} group and (for {@code bark}) the separate {@code dog} group, so a
+     * "group" name would misdescribe it.
+     */
+    protected abstract String[] getHealthOverviewChannelIds();
+
+    /**
      * Returns the parent bridge cast to {@link TractiveAccountHandler}, or {@code null} if the
      * bridge is absent or of an unexpected type.
      */
@@ -263,11 +382,15 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Performs an authenticated GET and returns the parsed JSON body, or {@code null} on any
-     * HTTP or parse error. Retries automatically on HTTP 429.
+     * Performs an authenticated GET and returns the parsed JSON body, or {@code null} on any HTTP or parse error.
+     * Retries automatically on HTTP 429.
+     *
+     * @param sharedBucket the {@link SharedRateLimitBucket} for this call's host, or {@code null} if it has none;
+     *            forwarded so a HTTP 429 can correct that bucket's local estimate
      */
-    protected @Nullable JsonObject getJson(TractiveAccountHandler bridge, String url) {
-        ContentResponse response = executeGet(bridge, url);
+    protected @Nullable JsonObject getJson(TractiveAccountHandler bridge, String url,
+            @Nullable SharedRateLimitBucket sharedBucket) {
+        ContentResponse response = executeGet(bridge, url, sharedBucket);
         if (response == null) {
             return null;
         }
@@ -276,20 +399,28 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
 
     /**
      * Sends a tracker command. Tractive commands use GET, not POST.
-     * Failures are logged at DEBUG and silently swallowed; commands are best-effort.
+     *
+     * Failures are logged at WARN and silently swallowed; commands are best-effort.
+     *
      * Consumes a token from the shared {@code graph.tractive.com} rate-limit bucket if one is available, purely to keep
-     * its internal accounting honest about traffic -- deliberately never gated on the result, since commands are
-     * best-effort and shouldn't be silently dropped by the binding's bookkeeping.
+     * its internal accounting honest about traffic -- the request itself is always sent regardless of the result,
+     * since commands are best-effort and shouldn't be silently dropped by the binding's bookkeeping.
+     * Whether a subsequent HTTP 429 corrects the shared bucket depends on the result, though: it's only passed
+     * downstream (instead of {@code null}) when this call's own token was actually available, so HTTP 429 reaching
+     * {@link TractiveRetryUtil} always genuinely contradicts what the local model believed.
      */
     protected void sendCommand(HttpClient httpClient, TractiveAccountHandler bridge, String commandName, String state) {
-        bridge.getGraphApiRateLimitBucket().tryConsume();
+        SharedRateLimitBucket graphBucket = bridge.getGraphApiRateLimitBucket();
+        boolean tokenWasAvailable = graphBucket.tryConsume();
         String url = API_BASE_URL + "tracker/" + trackerId + "/command/" + commandName + "/" + state;
-        ContentResponse response = sendGetWithReauth(bridge, httpClient, url, "Command " + commandName + "/" + state);
+        ContentResponse response = sendGetWithReauth(bridge, httpClient, url, "Command " + commandName + "/" + state,
+                tokenWasAvailable ? graphBucket : null);
         if (response == null) {
+            logger.warn("Command {}/{} could not be completed", commandName, state);
             return;
         }
         if (response.getStatus() != HttpStatus.OK_200) {
-            logger.debug("Command {}/{} returned HTTP {}", commandName, state, response.getStatus());
+            logger.warn("Command {}/{} returned HTTP {}", commandName, state, response.getStatus());
         } else {
             logger.trace("Command {}/{} → {}", commandName, state, response.getContentAsString());
             if (isLinked(CHANNEL_LAST_CONTACT)) {
@@ -311,7 +442,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Triggers an immediate tracker details and hardware report refresh outside the polling schedule.
+     * Triggers an immediate Device Info and battery-level refresh outside the polling schedule. This also calls
+     * {@link #pollTrackerDetails}, but Tracker Status won't actually change as a result unless this happens to be
+     * the very first successful call ever: REST only ever seeds that group once (see {@link #applyTrackerDetails}),
+     * since a manually-triggered REST response is no more trustworthy at telling whether it's fresher than the
+     * real-time channel's own state than an unattended one is.
+     *
      * Intended to be called from the tracker model's {@code ThingActions} implementation (e.g.
      * {@link org.openhab.binding.tractive.internal.action.TractiveDog6Actions} for the Dog 6).
      */
@@ -327,7 +463,10 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * Fetches historical positions for this tracker between two instants.
      *
      * Consumes a token from the shared {@code graph.tractive.com} rate-limit bucket if one is available, purely to keep
-     * its internal accounting honest about traffic -- deliberately never gated on the result.
+     * its internal accounting honest about traffic -- the request itself is always sent regardless of the result.
+     * Whether a subsequent HTTP 429 corrects the shared bucket depends on the result, though: it's only passed
+     * downstream (instead of {@code null}) when this call's own token was actually available, so HTTP 429 reaching
+     * {@link TractiveRetryUtil} always genuinely contradicts what the local model believed.
      *
      * @return the raw JSON array string, or {@code null} on any HTTP or parse error
      */
@@ -336,12 +475,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (bridge == null) {
             return null;
         }
-        bridge.getGraphApiRateLimitBucket().tryConsume();
+        SharedRateLimitBucket graphBucket = bridge.getGraphApiRateLimitBucket();
+        boolean tokenWasAvailable = graphBucket.tryConsume();
         String url = API_BASE_URL + "tracker/" + trackerId + "/positions?time_from=" + from.toEpochSecond()
                 + "&time_to=" + to.toEpochSecond() + "&format=json";
-        ContentResponse response = sendGetWithReauth(bridge, bridge.getHttpClient(), url, "fetchPositions");
+        ContentResponse response = sendGetWithReauth(bridge, bridge.getHttpClient(), url, "fetchPositions",
+                tokenWasAvailable ? graphBucket : null);
         if (response == null) {
-            logger.warn("fetchPositions({}, {}) could not be completed (see DEBUG log for the cause)", from, to);
+            logger.warn("fetchPositions({}, {}) could not be completed", from, to);
             return null;
         }
         if (response.getStatus() != HttpStatus.OK_200) {
@@ -355,14 +496,15 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Polls all four REST endpoints and updates the corresponding channels.
+     * Polls the three REST endpoints that stay on the recurring schedule (Tracker Status/Device Info, via
+     * {@link #pollTrackerDetails}, don't -- see the note on {@link #applyTrackerDetails} for why) and updates the
+     * corresponding channels.
      */
     protected void pollAll() {
         TractiveAccountHandler bridge = getAccountHandler();
         if (bridge == null || bridge.getThing().getStatus() != ThingStatus.ONLINE) {
             return;
         }
-        pollTrackerDetails(bridge);
         pollHwReport(bridge);
         pollPositionReport(bridge);
         pollHealthOverview(bridge);
@@ -380,16 +522,21 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
 
     /**
      * Consumes one token from the bridge's shared {@code graph.tractive.com} rate-limit bucket (see
-     * {@link SharedRateLimitBucket}). If none is available, releases {@code guard} (so a later attempt isn't blocked by
-     * an in-progress/cooldown state for a call that never happened) and re-applies its cached response, if any -- the
-     * same treatment as a {@link PollGuard.AcquireResult#COOLDOWN} skip, just triggered by the shared account-level
-     * budget instead of this endpoint's own interval.
+     * {@link SharedRateLimitBucket}). If none is available and {@link #recurringPollEnabled} is {@code true},
+     * releases {@code guard} (so a later attempt isn't blocked by an in-progress/cooldown state for a call that
+     * never happened) and re-applies its cached response, if any -- the same treatment as a
+     * {@link PollGuard.AcquireResult#COOLDOWN} skip, just triggered by the shared account-level budget instead of
+     * this endpoint's own interval. If {@link #recurringPollEnabled} is {@code false}, there is no future poll cycle
+     * to retry a skipped call on, so the token is still consumed for accounting but the caller proceeds with the
+     * HTTP call regardless -- the same "consume but never gate" treatment {@link #sendCommand} and
+     * {@code fetchPositions()} already use for their own one-shot, deliberately-triggered calls.
      *
-     * @return {@code true} if a token was consumed and the caller should proceed with the actual HTTP call
+     * @return {@code true} if the caller should proceed with the actual HTTP call
      */
     private boolean tryConsumeSharedBudget(TractiveAccountHandler bridge, PollGuard<JsonObject> guard,
             Consumer<JsonObject> applyCached, String logContext) {
-        if (bridge.getGraphApiRateLimitBucket().tryConsume()) {
+        boolean tokenWasAvailable = bridge.getGraphApiRateLimitBucket().tryConsume();
+        if (tokenWasAvailable || !recurringPollEnabled) {
             return true;
         }
         guard.release();
@@ -409,6 +556,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * response is already in flight, so the cache is left untouched.
      */
     protected void pollTrackerDetails(TractiveAccountHandler bridge) {
+        if (!isAnyHardwareOrDeviceInfoChannelLinked()) {
+            return;
+        }
         PollGuard.AcquireResult result = trackerDetailsGuard.tryAcquire();
         if (result == PollGuard.AcquireResult.COOLDOWN) {
             JsonObject cached = trackerDetailsGuard.getCached();
@@ -427,35 +577,59 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         try {
-            JsonObject json = getJson(bridge, API_BASE_URL + "tracker/" + trackerId);
+            JsonObject json = getJson(bridge, API_BASE_URL + "tracker/" + trackerId,
+                    bridge.getGraphApiRateLimitBucket());
             if (json == null) {
                 return;
             }
-            trackerDetailsGuard.setCached(json);
             applyTrackerDetails(json);
+            trackerDetailsGuard.setCached(json);
         } finally {
             trackerDetailsGuard.release();
         }
     }
 
     /**
-     * Applies a {@code tracker/{trackerId}} payload to the Hardware channel group.
+     * Applies a {@code tracker/{trackerId}} payload to the Hardware channel group. The Tracker Status fields below
+     * are only ever written once, on the very first successful call -- checked via {@link
+     * #trackerDetailsGuard}{@code .getCached()} being {@code null} rather than a dedicated field, since the guard
+     * already distinguishes "never succeeded" from "succeeded at least once." That only works because the caller
+     * applies before caching, so this check still sees the pre-this-call state.
      */
     private void applyTrackerDetails(JsonObject json) {
-        updateStringChannel(CHANNEL_TRACKER_STATE, json, FIELD_TRACKER_STATE);
-        updateStringChannel(CHANNEL_CHARGING_STATE, json, FIELD_CHARGING_STATE);
-        updateStringChannel(CHANNEL_BATTERY_STATE, json, FIELD_BATTERY_STATE);
-        updateStringChannel(CHANNEL_TRACKER_STATE_REASON, json, FIELD_STATE_REASON);
         updateStringChannel(CHANNEL_MODEL_NUMBER, json, FIELD_MODEL_NUMBER);
         updateStringChannel(CHANNEL_HW_EDITION, json, FIELD_HW_EDITION);
         updateStringChannel(CHANNEL_FIRMWARE_VERSION, json, FIELD_FW_VERSION);
         updateStringChannel(CHANNEL_GEOFENCE_SENSITIVITY, json, FIELD_GEOFENCE_SENSITIVITY);
+        updatePowerSavingFlag(json, FIELD_STATE_REASON);
+
+        if (trackerDetailsGuard.getCached() != null) {
+            return;
+        }
+        updateStringChannel(CHANNEL_TRACKER_STATE, json, FIELD_TRACKER_STATE);
+        updateStringChannel(CHANNEL_CHARGING_STATE, json, FIELD_CHARGING_STATE);
+        updateStringChannel(CHANNEL_BATTERY_STATE, json, FIELD_BATTERY_STATE);
+        updateStringChannel(CHANNEL_TRACKER_STATE_REASON, json, FIELD_STATE_REASON);
         updateStringChannel(CHANNEL_ZONE_ID, json, FIELD_PRIORITIZED_ZONE_ID);
         updateStringChannel(CHANNEL_ZONE_TYPE, json, FIELD_PRIORITIZED_ZONE_TYPE);
+
         updateEpochChannel(CHANNEL_ZONE_LAST_SEEN_AT, json, FIELD_PRIORITIZED_ZONE_LAST_SEEN_AT);
         updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, json, FIELD_PRIORITIZED_ZONE_ENTERED_AT);
         updateStringChannel(CHANNEL_POWER_SAVING_ZONE_ID, json, FIELD_POWER_SAVING_ZONE_ID);
-        updatePowerSavingFlag(json, FIELD_STATE_REASON);
+    }
+
+    /**
+     * Whether anything {@link #pollTrackerDetails} could write is actually linked -- skips the whole REST call when
+     * nothing is, mirroring the same-purpose check in
+     * {@link #pollHwReport}/{@link #pollPositionReport}/{@link #pollHealthOverview}.
+     */
+    private boolean isAnyHardwareOrDeviceInfoChannelLinked() {
+        return isLinked(CHANNEL_MODEL_NUMBER) || isLinked(CHANNEL_HW_EDITION) || isLinked(CHANNEL_FIRMWARE_VERSION)
+                || isLinked(CHANNEL_GEOFENCE_SENSITIVITY) || isLinked(CHANNEL_TRACKER_STATE)
+                || isLinked(CHANNEL_CHARGING_STATE) || isLinked(CHANNEL_BATTERY_STATE)
+                || isLinked(CHANNEL_TRACKER_STATE_REASON) || isLinked(CHANNEL_ZONE_ID) || isLinked(CHANNEL_ZONE_TYPE)
+                || isLinked(CHANNEL_ZONE_ENTERED_AT) || isLinked(CHANNEL_ZONE_LAST_SEEN_AT)
+                || isLinked(CHANNEL_POWER_SAVING_ZONE_ID);
     }
 
     /**
@@ -464,6 +638,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * response is already in flight, so the cache is left untouched.
      */
     protected void pollHwReport(TractiveAccountHandler bridge) {
+        if (!isLinked(CHANNEL_BATTERY_LEVEL)) {
+            return;
+        }
         PollGuard.AcquireResult result = hwReportGuard.tryAcquire();
         if (result == PollGuard.AcquireResult.COOLDOWN) {
             JsonObject cached = hwReportGuard.getCached();
@@ -482,7 +659,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         try {
-            JsonObject json = getJson(bridge, API_BASE_URL + "device_hw_report/" + trackerId + "/");
+            JsonObject json = getJson(bridge, API_BASE_URL + "device_hw_report/" + trackerId + "/",
+                    bridge.getGraphApiRateLimitBucket());
             if (json != null) {
                 hwReportGuard.setCached(json);
                 applyHwReport(json);
@@ -498,6 +676,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * response is already in flight, so the cache is left untouched.
      */
     protected void pollPositionReport(TractiveAccountHandler bridge) {
+        if (!positionGroupLinked) {
+            return;
+        }
         PollGuard.AcquireResult result = positionReportGuard.tryAcquire();
         if (result == PollGuard.AcquireResult.COOLDOWN) {
             JsonObject cached = positionReportGuard.getCached();
@@ -516,7 +697,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         try {
-            JsonObject json = getJson(bridge, API_BASE_URL + "device_pos_report/" + trackerId);
+            JsonObject json = getJson(bridge, API_BASE_URL + "device_pos_report/" + trackerId,
+                    bridge.getGraphApiRateLimitBucket());
             if (json != null) {
                 positionReportGuard.setCached(json);
                 applyPositionReport(json);
@@ -533,6 +715,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * untouched.
      */
     protected void pollHealthOverview(TractiveAccountHandler bridge) {
+        if (!healthOverviewLinked) {
+            return;
+        }
         PollGuard.AcquireResult result = healthOverviewGuard.tryAcquire();
         if (result == PollGuard.AcquireResult.COOLDOWN) {
             JsonObject cached = healthOverviewGuard.getCached();
@@ -548,7 +733,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         try {
-            JsonObject json = getJson(bridge, APS_BASE_URL + "pet/" + trackedPetId + "/health/overview");
+            JsonObject json = getJson(bridge, APS_BASE_URL + "pet/" + trackedPetId + "/health/overview", null);
             if (json != null) {
                 healthOverviewGuard.setCached(json);
                 applyHealthOverview(json);
@@ -556,6 +741,28 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         } finally {
             healthOverviewGuard.release();
         }
+    }
+
+    /**
+     * Applies a health overview payload if its {@code activityDataSyncedAt} is not older than the one already
+     * applied -- same apply-if-newer guard as {@link #applyPositionReport}/{@link #applyHwReport}: both REST and the
+     * real-time channel can independently deliver this data, and either can occasionally be the first to have a fresher
+     * sync. Falls through to applying unconditionally if the field is missing entirely, since there's nothing to
+     * compare against.
+     */
+    private void applyHealthOverviewIfNewer(JsonObject json) {
+        JsonElement syncedEl = json.get(FIELD_ACTIVITY_DATA_SYNCED_AT);
+        if (syncedEl != null && !syncedEl.isJsonNull()) {
+            Instant syncedAt = parseFlexibleInstant(syncedEl);
+            Instant lastApplied = lastAppliedHealthSyncedAt;
+            if (lastApplied != null && syncedAt.isBefore(lastApplied)) {
+                logger.debug("Ignoring health overview: activityDataSyncedAt {} is older than already-applied {}",
+                        syncedAt, lastApplied);
+                return;
+            }
+            lastAppliedHealthSyncedAt = syncedAt;
+        }
+        applyHealthOverview(json);
     }
 
     /**
@@ -573,6 +780,17 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      */
     protected void applyPositionReport(JsonObject json) {
         logger.trace("Applying position report: {}", json);
+        JsonElement reportTimeEl = json.get(FIELD_TIME);
+        if (reportTimeEl != null && !reportTimeEl.isJsonNull()) {
+            long reportTime = reportTimeEl.getAsLong();
+            Long lastApplied = lastAppliedPositionTime;
+            if (lastApplied != null && reportTime < lastApplied) {
+                logger.debug("Ignoring position report: time {} is older than already-applied {}", reportTime,
+                        lastApplied);
+                return;
+            }
+            lastAppliedPositionTime = reportTime;
+        }
         if (json.has(FIELD_LATLONG)) {
             JsonArray ll = json.get(FIELD_LATLONG).getAsJsonArray();
             if (ll.size() == 2) {
@@ -617,6 +835,16 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      */
     protected void applyHwReport(JsonObject json) {
         logger.trace("Applying hw report: {}", json);
+        JsonElement reportTimeEl = json.get(FIELD_TIME);
+        if (reportTimeEl != null && !reportTimeEl.isJsonNull()) {
+            long reportTime = reportTimeEl.getAsLong();
+            Long lastApplied = lastAppliedHwTime;
+            if (lastApplied != null && reportTime < lastApplied) {
+                logger.debug("Ignoring hw report: time {} is older than already-applied {}", reportTime, lastApplied);
+                return;
+            }
+            lastAppliedHwTime = reportTime;
+        }
         if (isLinked(CHANNEL_BATTERY_LEVEL) && json.has(FIELD_BATTERY_LEVEL)
                 && !json.get(FIELD_BATTERY_LEVEL).isJsonNull()) {
             updateState(CHANNEL_BATTERY_LEVEL, new DecimalType(json.get(FIELD_BATTERY_LEVEL).getAsInt()));
@@ -654,6 +882,11 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * Updates the zone channel group from a nested {@code prioritized_zone} object on the real-time channel. REST
      * carries the same data flattened as {@code prioritized_zone_*} top-level fields, handled directly in
      * {@link #pollTrackerDetails(TractiveAccountHandler)}.
+     *
+     * {@code zone-last-seen-at} is deliberately not read from {@code zone.last_seen_at} here -- that field lags its
+     * own sibling position/hardware data within the same push (confirmed from a real capture). It's derived from
+     * {@code position.time} instead, in {@link #onChannelEvent}, whenever a position update and a non-null zone
+     * co-occur in the same message.
      */
     protected void applyPrioritizedZone(JsonObject event) {
         if (!event.has(FIELD_PRIORITIZED_ZONE) || !event.get(FIELD_PRIORITIZED_ZONE).isJsonObject()) {
@@ -662,7 +895,6 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         JsonObject zone = event.get(FIELD_PRIORITIZED_ZONE).getAsJsonObject();
         updateStringChannel(CHANNEL_ZONE_ID, zone, FIELD_ID);
         updateStringChannel(CHANNEL_ZONE_TYPE, zone, FIELD_ZONE_TYPE);
-        updateEpochChannel(CHANNEL_ZONE_LAST_SEEN_AT, zone, FIELD_ZONE_LAST_SEEN_AT);
         updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, zone, FIELD_ZONE_ENTERED_AT);
     }
 
@@ -812,7 +1044,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         try {
-            JsonObject json = getJson(bridge, API_BASE_URL + "trackable_object/" + trackedPetId);
+            JsonObject json = getJson(bridge, API_BASE_URL + "trackable_object/" + trackedPetId,
+                    bridge.getGraphApiRateLimitBucket());
             if (json != null) {
                 profileGuard.setCached(json);
                 applyProfile(json);
@@ -963,36 +1196,55 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (isLinked(channelId)) {
             JsonElement el = json.get(field);
             if (el != null && !el.isJsonNull()) {
-                ZonedDateTime zdt;
-                try {
-                    zdt = Instant.parse(el.getAsString()).atZone(ZoneId.systemDefault());
-                } catch (DateTimeParseException e) {
-                    zdt = Instant.ofEpochSecond(el.getAsLong()).atZone(ZoneId.systemDefault());
-                }
-                updateState(channelId, new DateTimeType(zdt));
+                updateState(channelId, new DateTimeType(parseFlexibleInstant(el).atZone(ZoneId.systemDefault())));
             }
         }
     }
 
     /**
-     * Sends an authenticated GET request, retrying once with a fresh token if the first attempt
-     * returns HTTP 401. Returns {@code null} if the request could not be completed at all
-     * (interrupted, or failed after retries) — callers still need to check the response status.
+     * Parses a JSON element that may be either a Unix epoch (long) or an ISO 8601 string -- shared by {@link
+     * #updateTimestampChannel} and {@link #applyHealthOverviewIfNewer}, which both need to handle {@code
+     * activityDataSyncedAt} in either form.
+     */
+    private static Instant parseFlexibleInstant(JsonElement el) {
+        try {
+            return Instant.parse(el.getAsString());
+        } catch (DateTimeParseException e) {
+            return Instant.ofEpochSecond(el.getAsLong());
+        }
+    }
+
+    /**
+     * Sends an authenticated GET request, retrying once with a fresh token if the first attempt returns HTTP 401 or
+     * 403. The API might report a server-side token invalidation as 403 rather than 401; re-authenticating with the
+     * still-valid stored credentials resolves it, same as 401
+     *
+     * Returns {@code null} if the request could not be completed at all (interrupted, or failed after retries).
+     *
+     * @param sharedBucket the {@link SharedRateLimitBucket} for this call's host, or {@code null} if it has none;
+     *            forwarded to {@link TractiveRetryUtil} so HTTP 429 can correct that bucket's local estimate
      */
     private @Nullable ContentResponse sendGetWithReauth(TractiveAccountHandler bridge, HttpClient httpClient,
-            String url, String logContext) {
+            String url, String logContext, @Nullable SharedRateLimitBucket sharedBucket) {
         String tokenSnapshot = bridge.getAccessToken();
         try {
             ContentResponse response = TractiveRetryUtil
                     .sendWithRetry(() -> bridge.addAuthHeaders(httpClient.newRequest(url).method(HttpMethod.GET)),
-                            scheduler, logger)
+                            scheduler, logger, sharedBucket)
                     .get();
-            if (response.getStatus() == HttpStatus.UNAUTHORIZED_401) {
-                logger.debug("{} returned 401, triggering re-auth", logContext);
+            int status = response.getStatus();
+            if (status == HttpStatus.UNAUTHORIZED_401 || status == HttpStatus.FORBIDDEN_403) {
+                if (status == HttpStatus.FORBIDDEN_403) {
+                    logger.warn(
+                            "{} returned 403, triggering re-auth (server-side token invalidation, not ordinary expiry): {}",
+                            logContext, response.getContentAsString());
+                } else {
+                    logger.debug("{} returned 401, triggering re-auth", logContext);
+                }
                 bridge.refreshToken(tokenSnapshot);
                 response = TractiveRetryUtil
                         .sendWithRetry(() -> bridge.addAuthHeaders(httpClient.newRequest(url).method(HttpMethod.GET)),
-                                scheduler, logger)
+                                scheduler, logger, sharedBucket)
                         .get();
             }
             return response;
@@ -1005,13 +1257,15 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         }
     }
 
-    private @Nullable ContentResponse executeGet(TractiveAccountHandler bridge, String url) {
-        ContentResponse response = sendGetWithReauth(bridge, bridge.getHttpClient(), url, "GET " + url);
+    private @Nullable ContentResponse executeGet(TractiveAccountHandler bridge, String url,
+            @Nullable SharedRateLimitBucket sharedBucket) {
+        ContentResponse response = sendGetWithReauth(bridge, bridge.getHttpClient(), url, "GET " + url, sharedBucket);
         if (response == null) {
+            logger.warn("GET {} could not be completed", url);
             return null;
         }
         if (response.getStatus() != HttpStatus.OK_200) {
-            logger.debug("GET {} returned HTTP {}", url, response.getStatus());
+            logger.warn("GET {} returned HTTP {}: {}", url, response.getStatus(), response.getContentAsString());
             return null;
         }
         logger.trace("GET {} → {}", url, response.getContentAsString());

@@ -51,4 +51,29 @@ class SharedRateLimitBucketTest {
         assertTrue(bucket.tryConsume());
         assertFalse(bucket.tryConsume());
     }
+
+    @Test
+    void depleteForcesBucketEmptyEvenAtFullCapacity() {
+        SharedRateLimitBucket bucket = new SharedRateLimitBucket(5, 0.0);
+        bucket.deplete(0);
+        assertFalse(bucket.tryConsume());
+    }
+
+    @Test
+    void depleteResetsTheRefillClockSoElapsedTimeBeforeItIsNotCreditedAfter() throws InterruptedException {
+        SharedRateLimitBucket bucket = new SharedRateLimitBucket(1, 1000.0);
+        Thread.sleep(30);
+        bucket.deplete(0);
+        assertFalse(bucket.tryConsume());
+    }
+
+    @Test
+    void depleteWithProtectionWindowBlocksRefillUntilThatMuchTimeHasPassed() throws InterruptedException {
+        SharedRateLimitBucket bucket = new SharedRateLimitBucket(1, 1000.0);
+        bucket.deplete(50);
+        Thread.sleep(20);
+        assertFalse(bucket.tryConsume());
+        Thread.sleep(40);
+        assertTrue(bucket.tryConsume());
+    }
 }

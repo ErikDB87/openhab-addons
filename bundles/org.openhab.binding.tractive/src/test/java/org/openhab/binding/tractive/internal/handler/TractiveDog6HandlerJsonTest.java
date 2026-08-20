@@ -18,6 +18,7 @@ import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -568,5 +569,126 @@ class TractiveDog6HandlerJsonTest {
         handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, buzzerControlEvent(true, 0.0, null));
 
         verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    private JsonObject positionReport(double lat, double lon, long time) {
+        JsonObject json = new JsonObject();
+        JsonArray latlong = new JsonArray();
+        latlong.add(lat);
+        latlong.add(lon);
+        json.add(TractiveBindingConstants.FIELD_LATLONG, latlong);
+        json.addProperty(TractiveBindingConstants.FIELD_TIME, time);
+        return json;
+    }
+
+    @Test
+    void applyPositionReportOlderTimeIsIgnored() {
+        handler.applyPositionReport(positionReport(SAMSON_LAT, SAMSON_LON, 1784832952L));
+        handler.applyPositionReport(positionReport(SAMSON_LAT + 1, SAMSON_LON + 1, 1784832951L));
+
+        verify(callback, times(1)).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LOCATION)), any(PointType.class));
+    }
+
+    @Test
+    void applyPositionReportEqualTimeIsStillApplied() {
+        JsonObject json = positionReport(SAMSON_LAT, SAMSON_LON, 1784832952L);
+
+        handler.applyPositionReport(json);
+        handler.applyPositionReport(json);
+
+        verify(callback, times(2)).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LOCATION)), any(PointType.class));
+    }
+
+    @Test
+    void applyPositionReportNewerTimeAfterOlderIsApplied() {
+        handler.applyPositionReport(positionReport(SAMSON_LAT, SAMSON_LON, 1784832951L));
+        handler.applyPositionReport(positionReport(SAMSON_LAT + 1, SAMSON_LON + 1, 1784832952L));
+
+        verify(callback, times(2)).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LOCATION)), any(PointType.class));
+    }
+
+    private JsonObject hwReport(int batteryLevel, long time) {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_BATTERY_LEVEL, batteryLevel);
+        json.addProperty(TractiveBindingConstants.FIELD_TIME, time);
+        return json;
+    }
+
+    @Test
+    void applyHwReportOlderTimeIsIgnored() {
+        handler.applyHwReport(hwReport(80, 1784832952L));
+        handler.applyHwReport(hwReport(20, 1784832951L));
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BATTERY_LEVEL)),
+                eq(new DecimalType(80)));
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BATTERY_LEVEL)), eq(new DecimalType(20)));
+    }
+
+    private JsonObject healthOverviewEvent(int minutesActive, long syncedAt) {
+        JsonObject activity = new JsonObject();
+        activity.addProperty(TractiveBindingConstants.FIELD_MINUTES_ACTIVE, minutesActive);
+        JsonObject content = new JsonObject();
+        content.add(TractiveBindingConstants.FIELD_ACTIVITY, activity);
+        content.addProperty(TractiveBindingConstants.FIELD_ACTIVITY_DATA_SYNCED_AT, syncedAt);
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.FIELD_CONTENT, content);
+        return event;
+    }
+
+    @Test
+    void onChannelEventHealthOverviewOlderSyncIsIgnored() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_HEALTH_OVERVIEW, healthOverviewEvent(200, 1784832952L));
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_HEALTH_OVERVIEW, healthOverviewEvent(50, 1784832951L));
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_ACTIVITY_RECORDED)),
+                eq(new QuantityType<>(200, Units.MINUTE)));
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_ACTIVITY_RECORDED)),
+                eq(new QuantityType<>(50, Units.MINUTE)));
+    }
+
+    @Test
+    void onChannelEventDerivesZoneLastSeenAtFromPositionTimeWhenZoneCoOccurs() {
+        JsonObject zone = new JsonObject();
+        zone.addProperty(TractiveBindingConstants.FIELD_ID, "zone-1");
+        zone.addProperty(TractiveBindingConstants.FIELD_ZONE_TYPE, "POWER_SAVING");
+
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.FIELD_POSITION, positionReport(SAMSON_LAT, SAMSON_LON, 1784832952L));
+        event.add(TractiveBindingConstants.FIELD_PRIORITIZED_ZONE, zone);
+
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event);
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_ZONE_LAST_SEEN_AT)),
+                eq(new DateTimeType(Instant.ofEpochSecond(1784832952L).atZone(ZoneId.systemDefault()))));
+    }
+
+    @Test
+    void onChannelEventDoesNotDeriveZoneLastSeenAtWithoutZone() {
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.FIELD_POSITION, positionReport(SAMSON_LAT, SAMSON_LON, 1784832952L));
+
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event);
+
+        verify(callback, never())
+                .stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_ZONE_LAST_SEEN_AT)), any());
+    }
+
+    @Test
+    void onChannelEventDoesNotDeriveZoneLastSeenAtWithoutPosition() {
+        JsonObject zone = new JsonObject();
+        zone.addProperty(TractiveBindingConstants.FIELD_ID, "zone-1");
+
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.FIELD_PRIORITIZED_ZONE, zone);
+
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event);
+
+        verify(callback, never())
+                .stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_ZONE_LAST_SEEN_AT)), any());
     }
 }

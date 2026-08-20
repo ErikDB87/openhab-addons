@@ -2,7 +2,7 @@
 """
 Follow-up to rate_limit_burst_probe.py. That script found that a burst of 14 concurrent
 calls to GET tracker/{trackerId} gets a mixed 429/200 result (10/14 succeeded in the one
-run so far). This script answers three related but distinct follow-up questions:
+run so far). This script answers four related but distinct follow-up questions:
 
   --mode recovery  How long after being rate-limited does the account return to full
                     capacity? Deliberately triggers a 429 (reusing the already-known
@@ -41,6 +41,21 @@ run so far). This script answers three related but distinct follow-up questions:
                     suspected separate since it has a different backend fingerprint) if a
                     pet ID is provided.
 
+  --mode auth-endpoint  Does auth/token (also graph.tractive.com) share the same bucket as
+                    tracker/{trackerId}? Motivated by a real binding change under
+                    consideration: calling authenticate() unconditionally every 10 minutes
+                    (instead of only within 1h of expiry) to detect a server-side token
+                    revocation promptly -- if auth/token draws from the same budget as the
+                    REST polls, doing that could make ordinary polling fail more often, not
+                    less. Deliberately does NOT burst auth/token the way the other endpoints
+                    are burst: each call is a REAL production login for the account, so this
+                    sends only ONE extra login as a rested baseline, then ONE more
+                    immediately after deliberately depleting tracker/{trackerId} via the same
+                    known 14-concurrent trigger used everywhere else in this script. A 429 on
+                    that second call is evidence of a shared bucket; a clean 200 despite the
+                    just-depleted tracker/{trackerId} bucket is evidence auth/token has its
+                    own independent capacity.
+
 --mode recovery and --mode spacing both also accept --endpoint (default "tracker", same
 choices as rate_limit_burst_probe.py: "tracker", "device_hw_report", "device_pos_report",
 "health_overview") to run the same recovery-time / safe-spacing methodology against a
@@ -72,6 +87,7 @@ Usage:
     python rate_limit_window_probe.py --mode recovery
     python rate_limit_window_probe.py --mode spacing
     python rate_limit_window_probe.py --mode cross-endpoint
+    python rate_limit_window_probe.py --mode auth-endpoint
     python rate_limit_window_probe.py --mode recovery --endpoint health_overview
 
 You'll be prompted for email, password, and tracker ID at runtime (hidden password
@@ -139,6 +155,26 @@ def authenticate(email, password):
     with urllib.request.urlopen(req, timeout=15) as resp:
         payload = json.loads(resp.read().decode("utf-8"))
     return payload["user_id"], payload["access_token"]
+
+
+def probe_auth(email, password):
+    """Like authenticate(), but returns (status, detail) instead of raising on non-200 -- a 429
+    here is an expected possible OUTCOME of this specific probe, not a setup error."""
+    url = API_BASE_URL + "auth/token"
+    body = json.dumps({
+        "platform_email": email,
+        "platform_token": password,
+        "grant_type": "tractive",
+    }).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method="POST", headers={
+        "x-tractive-client": CLIENT_ID,
+        "content-type": "application/json;charset=UTF-8",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.status, "OK"
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", errors="replace")
 
 
 def tracker_url(tracker_id):
@@ -337,10 +373,54 @@ def mode_cross_endpoint(tracker_id, pet_id, user_id, access_token, recovery_paus
             f"{{trackerId}}={cross_failures}/14 failed -> {verdict}")
 
 
+def mode_cross_endpoint_auth(tracker_id, email, password, user_id, access_token, recovery_pause_seconds):
+    deplete_url = tracker_url(tracker_id)
+
+    log("=== Testing auth/token (single-call probes only -- see module docstring) ===")
+    log("  Baseline: one auth/token call from a fully rested state...")
+    baseline_status, baseline_detail = probe_auth(email, password)
+    log(f"    baseline: HTTP {baseline_status}")
+    if baseline_status not in (200, 429):
+        log(f"    UNEXPECTED status on the baseline auth call: {baseline_detail}. Stopping.")
+        return
+
+    log(f"  Resting {recovery_pause_seconds}s before the cross-contamination check...")
+    time.sleep(recovery_pause_seconds)
+
+    log("  Depleting tracker/{trackerId} via the known 14-concurrent trigger...")
+    deplete_statuses = concurrent_burst(deplete_url, user_id, access_token, 14)
+    deplete_counts = {}
+    for s in deplete_statuses:
+        deplete_counts[s] = deplete_counts.get(s, 0) + 1
+    log(f"    depletion results: {deplete_counts}")
+    if check_unexpected(deplete_counts):
+        return
+    if deplete_counts.get(429, 0) == 0:
+        log("    WARNING: depleting tracker/{trackerId} produced zero 429s this time (some "
+            "run-to-run variance is expected) -- the cross-contamination check below is "
+            "unreliable, since we can't be sure depletion actually happened. Treat with caution.")
+
+    log("  IMMEDIATELY firing one more auth/token call...")
+    cross_status, cross_detail = probe_auth(email, password)
+    log(f"    result: HTTP {cross_status}")
+    if cross_status not in (200, 429):
+        log(f"    UNEXPECTED status: {cross_detail}")
+
+    if cross_status == 429:
+        verdict = "SHARED (auth/token got rate-limited right after depleting tracker/{trackerId})"
+    elif cross_status == 200:
+        verdict = "INDEPENDENT (auth/token succeeded despite tracker/{trackerId} being depleted)"
+    else:
+        verdict = f"UNCLEAR (unexpected status {cross_status})"
+    log(f"\nRESULT: auth/token baseline=HTTP {baseline_status}, immediately after depleting "
+        f"tracker/{{trackerId}}=HTTP {cross_status} -> {verdict}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                       formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--mode", choices=["recovery", "spacing", "cross-endpoint"], required=True)
+    parser.add_argument("--mode", choices=["recovery", "spacing", "cross-endpoint", "auth-endpoint"],
+                         required=True)
     parser.add_argument("--endpoint", choices=sorted(ENDPOINTS), default="tracker",
                          help="[recovery/spacing modes only] REST call to target (default: "
                               "tracker, i.e. the original GET tracker/{trackerId} probes, "
@@ -369,23 +449,24 @@ def main():
                               "use this for a slow, methodologically clean sweep across a spacing "
                               "range, as opposed to a quick answer to 'is there a safe point here.'")
     parser.add_argument("--cross-endpoint-pause-seconds", type=float, default=600.0,
-                         help="[cross-endpoint mode] Seconds to rest between every step (baseline, "
-                              "depletion, cross-check, and between endpoints) (default: 600)")
+                         help="[cross-endpoint and auth-endpoint modes] Seconds to rest between "
+                              "every step (baseline, depletion, cross-check, and between "
+                              "endpoints) (default: 600)")
     args = parser.parse_args()
 
     requires_pet_id, build_url = ENDPOINTS[args.endpoint]
 
     email = os.environ.get("TRACTIVE_EMAIL") or input("Tractive email: ").strip()
     password = os.environ.get("TRACTIVE_PASSWORD") or getpass.getpass("Tractive password (hidden): ")
-    tracker_id = os.environ.get("TRACTIVE_TRACKER_ID") or input("Tracker ID (e.g. FCTPOEBK): ").strip()
+    tracker_id = os.environ.get("TRACTIVE_TRACKER_ID") or input("Tracker ID (e.g. ABCD1234): ").strip()
     pet_id = ""
     if args.mode == "cross-endpoint":
         pet_id = (os.environ.get("TRACTIVE_PET_ID")
-                  or input("Pet ID, optional (e.g. 661004cf4076103914d00820) -- Enter to skip the "
+                  or input("Pet ID, optional (e.g. 0123456789abcdef01234567) -- Enter to skip the "
                            "aps-api health endpoint: ").strip())
     elif requires_pet_id:
         pet_id = (os.environ.get("TRACTIVE_PET_ID")
-                  or input(f"Pet ID (e.g. 661004cf4076103914d00820), required for --endpoint "
+                  or input(f"Pet ID (e.g. 0123456789abcdef01234567), required for --endpoint "
                            f"{args.endpoint}: ").strip())
     pet_id_missing = requires_pet_id and args.mode != "cross-endpoint" and not pet_id
     if not email or not password or not tracker_id or pet_id_missing:
@@ -419,8 +500,15 @@ def main():
         mode_spacing(url, args.endpoint, user_id, access_token, spacings, args.recovery_pause_seconds,
                      args.round_size,
                      stop_on_success=not args.continue_after_success)
-    else:
+    elif args.mode == "cross-endpoint":
         mode_cross_endpoint(tracker_id, pet_id, user_id, access_token, args.cross_endpoint_pause_seconds)
+    else:
+        print("Reminder: each step below sends a REAL login to the account (unlike every other")
+        print("mode in this script, which only ever sends read-only GETs) -- see the module")
+        print("docstring's --mode auth-endpoint section for why this one is deliberately")
+        print("single-call rather than a burst.")
+        mode_cross_endpoint_auth(tracker_id, email, password, user_id, access_token,
+                                  args.cross_endpoint_pause_seconds)
 
 
 if __name__ == "__main__":

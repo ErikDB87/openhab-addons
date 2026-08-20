@@ -109,7 +109,7 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
         try {
             return TractiveRetryUtil
                     .sendWithRetry(() -> bridge.addAuthHeaders(httpClient.newRequest(url).method(HttpMethod.GET)),
-                            scheduler, logger)
+                            scheduler, logger, bridge.getGraphApiRateLimitBucket())
                     .get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
@@ -200,6 +200,7 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
             String modelName = MODEL_NAMES.getOrDefault(modelNumber, modelNumber);
             String label = petName.isBlank() ? "Tractive " + modelName + " (" + trackerId + ")"
                     : "Tractive " + modelName + " (" + petName + ")";
+            logger.info("Discovered {} — added to Inbox", label);
             thingDiscovered(DiscoveryResultBuilder.create(thingUID).withBridge(bridgeUID).withProperties(properties)
                     .withRepresentationProperty("trackerId").withLabel(label).build());
         }

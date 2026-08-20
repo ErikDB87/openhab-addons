@@ -73,8 +73,13 @@ public class TractiveDog6Actions implements ThingActions {
         }
     }
 
-    /** Triggers an immediate tracker details and hardware report refresh. */
-    @RuleAction(label = "Refresh hardware", description = "Triggers an immediate refresh of the \"Hardware\" channel group, outside the polling schedule")
+    /**
+     * Triggers an immediate Device Info and battery-level refresh. Also re-polls Tracker Status, but that group
+     * only actually changes as a result if this happens to be the very first successful poll ever -- REST seeds it
+     * once and the real-time channel is authoritative afterward (see
+     * {@link org.openhab.binding.tractive.internal.handler.TractiveTrackerHandler#refreshHardware()}).
+     */
+    @RuleAction(label = "Refresh hardware", description = "Triggers an immediate refresh of the \"Device Info\" channel group and \"Hardware\"'s battery level, outside the polling schedule. Also re-polls \"Tracker Status\", but that group only updates as a result on the very first call ever made.")
     public void refreshHardware() {
         TractiveDog6Handler h = handler;
         if (h != null) {

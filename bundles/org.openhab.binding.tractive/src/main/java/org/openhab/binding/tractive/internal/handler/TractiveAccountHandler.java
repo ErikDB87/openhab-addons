@@ -34,6 +34,7 @@ import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
+import org.openhab.binding.tractive.internal.channel.TractiveChannelAuthException;
 import org.openhab.binding.tractive.internal.channel.TractiveChannelListener;
 import org.openhab.binding.tractive.internal.channel.TractiveEventListener;
 import org.openhab.binding.tractive.internal.channel.TractiveKeepAliveTimeoutException;
@@ -67,7 +68,6 @@ import com.google.gson.JsonParser;
 public class TractiveAccountHandler extends BaseBridgeHandler {
 
     private static final long TOKEN_REFRESH_INTERVAL_MINUTES = 10;
-    private static final long TOKEN_REFRESH_BEFORE_EXPIRY_SECONDS = 3600;
     private static final long CHANNEL_RECONNECT_INITIAL_DELAY_S = 15;
     private static final long CHANNEL_RECONNECT_MAX_DELAY_S = 300;
 
@@ -203,16 +203,13 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         }
         long nowEpochSeconds = System.currentTimeMillis() / 1000;
         logger.trace("Token expiry check: {}s remaining", expiresAt - nowEpochSeconds);
-        if (expiresAt - nowEpochSeconds < TOKEN_REFRESH_BEFORE_EXPIRY_SECONDS) {
-            logger.debug("Token expiry within {} s, refreshing", TOKEN_REFRESH_BEFORE_EXPIRY_SECONDS);
-            try {
-                authenticate(currentConfig.email, currentConfig.password, accessToken);
-            } catch (InterruptedIOException e) {
-                // Thread already re-interrupted inside authenticate(); exit without touching status.
-            } catch (IOException | RuntimeException e) {
-                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                        "Token refresh failed: " + e.getMessage());
-            }
+        try {
+            authenticate(currentConfig.email, currentConfig.password, accessToken);
+        } catch (InterruptedIOException e) {
+            // Thread already re-interrupted inside authenticate(); exit without touching status.
+        } catch (IOException | RuntimeException e) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Token refresh failed: " + e.getMessage());
         }
     }
 
@@ -238,6 +235,13 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
             } catch (TractiveKeepAliveTimeoutException e) {
                 logger.debug("Channel keep-alive stale, reconnecting: {}", e.getMessage());
                 scheduleChannelConnect(channelListener, CHANNEL_RECONNECT_INITIAL_DELAY_S);
+            } catch (TractiveChannelAuthException e) {
+                logger.warn("{}, triggering re-auth", e.getMessage());
+                refreshToken(token);
+                long nextDelay = channelReconnectDelaySeconds;
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2,
+                        CHANNEL_RECONNECT_MAX_DELAY_S);
+                scheduleChannelConnect(channelListener, nextDelay);
             } catch (InterruptedIOException e) {
                 logger.debug("Channel connection timed out: {}", e.getMessage());
                 long nextDelay = channelReconnectDelaySeconds;
@@ -251,7 +255,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
                         CHANNEL_RECONNECT_MAX_DELAY_S);
                 scheduleChannelConnect(channelListener, nextDelay);
             } catch (RuntimeException e) {
-                logger.debug("Unexpected error in channel listener: {}", e.getMessage());
+                logger.warn("Unexpected error in channel listener: {}", e.getMessage());
                 long nextDelay = channelReconnectDelaySeconds;
                 channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2,
                         CHANNEL_RECONNECT_MAX_DELAY_S);

@@ -33,13 +33,19 @@ import com.google.gson.JsonObject;
 
 /**
  * The {@link TractiveDog6Handler} handles a single Tractive Dog 6 tracker thing.
- * It registers with the account bridge for real-time channel events and polls
- * four REST endpoints on a configurable interval.
+ * It registers with the account bridge for real-time channel events, polls three REST endpoints (position, hardware
+ * battery level, health/dog) on a configurable interval as a backstop, and fetches Tracker Status, Device Info, and
+ * Profile once at Thing setup, refreshable afterward only via their own actions.
  *
  * @author Erik De Boeck - Initial contribution
  */
 @NonNullByDefault
 public class TractiveDog6Handler extends TractiveTrackerHandler {
+
+    private static final String[] HEALTH_OVERVIEW_CHANNEL_IDS = { CHANNEL_ACTIVITY_RECORDED, CHANNEL_ACTIVITY_GOAL,
+            CHANNEL_SLEEP_DAY, CHANNEL_SLEEP_NIGHT, CHANNEL_SLEEP_CALM, CHANNEL_RESTING_HEART_RATE_STATUS,
+            CHANNEL_RESTING_RESPIRATORY_RATE_STATUS, CHANNEL_UNSEEN_HEALTH_ALERTS, CHANNEL_ACTIVITY_SYNCED_AT,
+            CHANNEL_SCRATCH, CHANNEL_BARK };
 
     /**
      * Creates a new Dog 6 tracker handler for the given thing.
@@ -117,6 +123,11 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
             }
         }
         updateTimestampChannel(CHANNEL_ACTIVITY_SYNCED_AT, json, FIELD_ACTIVITY_DATA_SYNCED_AT);
+    }
+
+    @Override
+    protected String[] getHealthOverviewChannelIds() {
+        return HEALTH_OVERVIEW_CHANNEL_IDS;
     }
 
     @Override

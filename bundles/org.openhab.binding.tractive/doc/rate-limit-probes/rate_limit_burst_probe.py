@@ -152,11 +152,11 @@ def main():
 
     email = os.environ.get("TRACTIVE_EMAIL") or input("Tractive email: ").strip()
     password = os.environ.get("TRACTIVE_PASSWORD") or getpass.getpass("Tractive password (hidden): ")
-    tracker_id = os.environ.get("TRACTIVE_TRACKER_ID") or input("Tracker ID (e.g. FCTPOEBK): ").strip()
+    tracker_id = os.environ.get("TRACTIVE_TRACKER_ID") or input("Tracker ID (e.g. ABCD1234): ").strip()
     pet_id = ""
     if requires_pet_id:
         pet_id = (os.environ.get("TRACTIVE_PET_ID")
-                  or input(f"Pet ID (e.g. 661004cf4076103914d00820), required for --endpoint "
+                  or input(f"Pet ID (e.g. 0123456789abcdef01234567), required for --endpoint "
                            f"{args.endpoint}: ").strip())
     if not email or not password or not tracker_id or (requires_pet_id and not pet_id):
         print("Email, password, and tracker ID are all required"
@@ -192,7 +192,7 @@ def main():
         if unexpected:
             log(f"UNEXPECTED status code(s) {unexpected} -- not a 429, so this isn't the rate limit. "
                 "Likely a setup problem (wrong email/password/tracker ID/pet ID -- tracker IDs are "
-                "case-sensitive, e.g. 'FCTPOEBK' not 'fctpoebk') rather than something worth waiting "
+                "case-sensitive, e.g. 'ABCD1234' not 'abcd1234') rather than something worth waiting "
                 "out. Stopping instead of burning a 10-minute cooldown on a broken run.")
             return
 

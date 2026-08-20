@@ -33,6 +33,8 @@
 		<channel-groups>
 			<channel-group id="position" typeId="position-group"/>
 			<channel-group id="hardware" typeId="hardware-group"/>
+			<channel-group id="tracker-status" typeId="tracker-status-group"/>
+			<channel-group id="device-info" typeId="device-info-group"/>
 			<channel-group id="commands" typeId="commands-group"/>
 			<channel-group id="health" typeId="health-group"/>
 			<channel-group id="dog" typeId="dog-group"/>
@@ -50,8 +52,11 @@
 			</parameter>
 			<parameter name="refreshInterval" type="integer" unit="s" min="0">
 				<label>Refresh Interval</label>
-				<description>How often to re-poll tracker details from the REST API (seconds). Set to 0 to disable — real-time
-					updates arrive via the channel regardless.</description>
+				<description>How often to re-poll position, hardware battery level, and health/dog data as a backstop
+					alongside the
+					real-time channel (seconds). Set to 0 to disable. Tracker Status, Device Info, and
+					Profile are never on this
+					interval.</description>
 				<default>0</default>
 				<advanced>true</advanced>
 			</parameter>
@@ -73,6 +78,12 @@
 		<label>Hardware</label>
 		<channels>
 			<channel id="battery-level" typeId="system.battery-level"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="tracker-status-group">
+		<label>Tracker Status</label>
+		<channels>
 			<channel id="charging-state" typeId="charging-state"/>
 			<channel id="battery-state" typeId="battery-state"/>
 			<channel id="tracker-state" typeId="tracker-state"/>
@@ -82,11 +93,17 @@
 			<channel id="zone-entered-at" typeId="zone-entered-at"/>
 			<channel id="zone-last-seen-at" typeId="zone-last-seen-at"/>
 			<channel id="power-saving-zone-id" typeId="power-saving-zone-id"/>
+			<channel id="last-contact" typeId="last-contact"/>
+		</channels>
+	</channel-group-type>
+
+	<channel-group-type id="device-info-group">
+		<label>Device Info</label>
+		<channels>
 			<channel id="model-number" typeId="model-number"/>
 			<channel id="hw-edition" typeId="hw-edition"/>
 			<channel id="firmware-version" typeId="firmware-version"/>
 			<channel id="geofence-sensitivity" typeId="geofence-sensitivity"/>
-			<channel id="last-contact" typeId="last-contact"/>
 		</channels>
 	</channel-group-type>
 
@@ -344,14 +361,14 @@
 	<channel-type id="bark-status">
 		<item-type>String</item-type>
 		<label>Bark Status</label>
-		<description>Bark detection status from health overview (e.g. INFREQUENT, CALCULATING_BASELINE)</description>
+		<description>Bark detection status from health overview (e.g. NORMAL, ELEVATED)</description>
 		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="scratch-status">
 		<item-type>String</item-type>
 		<label>Scratch Status</label>
-		<description>Scratch detection status from health overview (e.g. INFREQUENT, NOT_ENOUGH_DATA_TODAY)</description>
+		<description>Scratch detection status from health overview (e.g. INFREQUENT)</description>
 		<state readOnly="true"/>
 	</channel-type>
 

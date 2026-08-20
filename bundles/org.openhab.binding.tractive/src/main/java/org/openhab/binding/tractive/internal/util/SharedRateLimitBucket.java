@@ -74,4 +74,20 @@ public class SharedRateLimitBucket {
             lastRefillMillis = now;
         }
     }
+
+    /**
+     * Forces the bucket to empty, and holds it there until {@code protectedMillis} from now. Intended for when
+     * HTTP 429 proves this bucket's own estimate was wrong -- the binding has no visibility into other consumers of
+     * the same budget (e.g. the Tractive app). {@code protectedMillis} lets a caller that knows a retry is about to
+     * run reserve whatever refills in the meantime for that retry, instead of leaving it open to whichever caller
+     * happens to check first; pass {@code 0} for an immediate reset with no protection window.
+     *
+     * @param protectedMillis how long, from now, no refill is credited to anyone
+     */
+    public void deplete(long protectedMillis) {
+        synchronized (lock) {
+            availableTokens = 0;
+            lastRefillMillis = System.currentTimeMillis() + protectedMillis;
+        }
+    }
 }

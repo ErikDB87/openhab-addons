@@ -58,42 +58,78 @@ public class TractiveBindingConstants {
     /** Channel ID for the last position fix's accuracy/uncertainty radius. */
     public static final String CHANNEL_POSITION_ACCURACY = "position#position-accuracy";
 
-    /** Channel ID for battery level percentage. */
+    /** Channel ID for battery level percentage; kept live by the real-time channel, backstopped by REST polling. */
     public static final String CHANNEL_BATTERY_LEVEL = "hardware#battery-level";
-    /** Channel ID for the tracker's charging state (e.g. {@code NOT_CHARGING}). */
-    public static final String CHANNEL_CHARGING_STATE = "hardware#charging-state";
-    /** Channel ID for the tracker's coarse battery state (e.g. {@code REGULAR}, {@code FULL}). */
-    public static final String CHANNEL_BATTERY_STATE = "hardware#battery-state";
-    /** Channel ID for the tracker's operational state (e.g. {@code OPERATIONAL}). */
-    public static final String CHANNEL_TRACKER_STATE = "hardware#tracker-state";
     /**
-     * Channel ID for the timestamp of the most recent successful contact via any REST poll or real-time channel event;
-     * a lightweight stalled-tracker detector.
+     * Channel ID for the tracker's charging state (e.g. {@code NOT_CHARGING}). Lives in the {@code tracker-status}
+     * group, not {@code hardware} -- see {@link #CHANNEL_TRACKER_STATE} for why.
      */
-    public static final String CHANNEL_LAST_CONTACT = "hardware#last-contact";
-    /** Channel ID for why the tracker's operational state is what it is (e.g. {@code POWER_SAVING}). */
-    public static final String CHANNEL_TRACKER_STATE_REASON = "hardware#tracker-state-reason";
-    /** Channel ID for the ID of the geofence zone currently most relevant to the tracker's position. */
-    public static final String CHANNEL_ZONE_ID = "hardware#zone-id";
+    public static final String CHANNEL_CHARGING_STATE = "tracker-status#charging-state";
+    /**
+     * Channel ID for the tracker's coarse battery state (e.g. {@code REGULAR}, {@code FULL}). See
+     * {@link #CHANNEL_TRACKER_STATE}.
+     */
+    public static final String CHANNEL_BATTERY_STATE = "tracker-status#battery-state";
+    /**
+     * Channel ID for the tracker's operational state (e.g. {@code OPERATIONAL}). Lives in its own {@code
+     * tracker-status} group, not {@code hardware}: unlike {@link #CHANNEL_BATTERY_LEVEL}, this data (and everything
+     * else in that group) has no per-field timestamp to arbitrate freshness against the real-time channel, so REST
+     * only ever seeds it once at Thing setup -- the real-time channel is authoritative for it from then on,
+     * regardless of {@code refreshInterval}.
+     */
+    public static final String CHANNEL_TRACKER_STATE = "tracker-status#tracker-state";
+    /**
+     * Channel ID for the timestamp of the most recent successful contact via any REST poll (including the
+     * {@code device-info}/{@code profile} one-shot fetches) or real-time channel event; a lightweight
+     * stalled-tracker detector. Unlike its {@code tracker-status} group-mates, this one is fed by every
+     * source in the binding, not just the real-time channel after an initial seed.
+     */
+    public static final String CHANNEL_LAST_CONTACT = "tracker-status#last-contact";
+    /**
+     * Channel ID for why the tracker's operational state is what it is (e.g. {@code POWER_SAVING}). See
+     * {@link #CHANNEL_TRACKER_STATE}.
+     */
+    public static final String CHANNEL_TRACKER_STATE_REASON = "tracker-status#tracker-state-reason";
+    /**
+     * Channel ID for the ID of the geofence zone currently most relevant to the tracker's position. See
+     * {@link #CHANNEL_TRACKER_STATE}.
+     */
+    public static final String CHANNEL_ZONE_ID = "tracker-status#zone-id";
     /**
      * Channel ID for the kind of the currently most relevant geofence zone
-     * ({@code POWER_SAVING}/{@code SAFE}/{@code DANGER}).
+     * ({@code POWER_SAVING}/{@code SAFE}/{@code DANGER}). See {@link #CHANNEL_TRACKER_STATE}.
      */
-    public static final String CHANNEL_ZONE_TYPE = "hardware#zone-type";
-    /** Channel ID for when the tracker entered its currently most relevant geofence zone. */
-    public static final String CHANNEL_ZONE_ENTERED_AT = "hardware#zone-entered-at";
-    /** Channel ID for when the tracker was last confirmed still inside its currently most relevant geofence zone. */
-    public static final String CHANNEL_ZONE_LAST_SEEN_AT = "hardware#zone-last-seen-at";
-    /** Channel ID for the ID of the tracker's configured Power Saving Zone. */
-    public static final String CHANNEL_POWER_SAVING_ZONE_ID = "hardware#power-saving-zone-id";
-    /** Channel ID for the tracker's hardware model code (e.g. {@code TG6C}). */
-    public static final String CHANNEL_MODEL_NUMBER = "hardware#model-number";
-    /** Channel ID for the tracker's hardware color/edition variant (e.g. {@code BROWN-LINES}). */
-    public static final String CHANNEL_HW_EDITION = "hardware#hw-edition";
-    /** Channel ID for the tracker's onboard firmware version string. */
-    public static final String CHANNEL_FIRMWARE_VERSION = "hardware#firmware-version";
-    /** Channel ID for the configured geofence entry/exit detection sensitivity. */
-    public static final String CHANNEL_GEOFENCE_SENSITIVITY = "hardware#geofence-sensitivity";
+    public static final String CHANNEL_ZONE_TYPE = "tracker-status#zone-type";
+    /**
+     * Channel ID for when the tracker entered its currently most relevant geofence zone. See
+     * {@link #CHANNEL_TRACKER_STATE}.
+     */
+    public static final String CHANNEL_ZONE_ENTERED_AT = "tracker-status#zone-entered-at";
+    /**
+     * Channel ID for when the tracker was last confirmed still inside its currently most relevant geofence zone.
+     * Derived from the position channel's own timestamp rather than read directly -- see the note on {@code
+     * applyPrioritizedZone()} in {@link org.openhab.binding.tractive.internal.handler.TractiveTrackerHandler} for
+     * why.
+     */
+    public static final String CHANNEL_ZONE_LAST_SEEN_AT = "tracker-status#zone-last-seen-at";
+    /** Channel ID for the ID of the tracker's configured Power Saving Zone. See {@link #CHANNEL_TRACKER_STATE}. */
+    public static final String CHANNEL_POWER_SAVING_ZONE_ID = "tracker-status#power-saving-zone-id";
+    /**
+     * Channel ID for the tracker's hardware model code (e.g. {@code TG6C}). Lives in its own {@code device-info}
+     * group -- unlike every {@code hardware}/{@code tracker-status} channel, this data has no real-time channel
+     * equivalent at all, so it's only ever fetched once at Thing setup or via the "Refresh hardware" action, never
+     * on the recurring poll schedule.
+     */
+    public static final String CHANNEL_MODEL_NUMBER = "device-info#model-number";
+    /**
+     * Channel ID for the tracker's hardware color/edition variant (e.g. {@code BROWN-LINES}). See
+     * {@link #CHANNEL_MODEL_NUMBER}.
+     */
+    public static final String CHANNEL_HW_EDITION = "device-info#hw-edition";
+    /** Channel ID for the tracker's onboard firmware version string. See {@link #CHANNEL_MODEL_NUMBER}. */
+    public static final String CHANNEL_FIRMWARE_VERSION = "device-info#firmware-version";
+    /** Channel ID for the configured geofence entry/exit detection sensitivity. See {@link #CHANNEL_MODEL_NUMBER}. */
+    public static final String CHANNEL_GEOFENCE_SENSITIVITY = "device-info#geofence-sensitivity";
 
     /** Channel ID for the buzzer Switch. */
     public static final String CHANNEL_BUZZER = "commands#buzzer";
@@ -132,10 +168,10 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_UNSEEN_HEALTH_ALERTS = "health#unseen-health-alerts";
     /** Channel ID for when activity/health data was last synced. */
     public static final String CHANNEL_ACTIVITY_SYNCED_AT = "health#activity-synced-at";
-    /** Channel ID for scratch status (e.g. {@code NORMAL}, {@code ELEVATED}, {@code NOT_ENOUGH_DATA_TODAY}). */
+    /** Channel ID for scratch status (e.g. {@code INFREQUENT}). */
     public static final String CHANNEL_SCRATCH = "health#scratch";
 
-    /** Channel ID for bark status (e.g. {@code INFREQUENT}, {@code CALCULATING_BASELINE}). */
+    /** Channel ID for bark status (e.g. {@code NORMAL}, {@code ELEVATED}). */
     public static final String CHANNEL_BARK = "dog#bark";
 
     /**
