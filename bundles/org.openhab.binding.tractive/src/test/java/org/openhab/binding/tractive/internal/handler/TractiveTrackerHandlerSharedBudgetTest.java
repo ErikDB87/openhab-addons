@@ -18,6 +18,9 @@ import static org.mockito.Mockito.*;
 
 import java.lang.reflect.Field;
 import java.util.Objects;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jetty.client.HttpClient;
@@ -33,10 +36,12 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
 import org.openhab.binding.tractive.internal.util.PollGuard;
 import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
+import org.openhab.binding.tractive.internal.util.TractiveRetryUtil;
 import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingUID;
+import org.openhab.core.thing.binding.BaseThingHandler;
 import org.openhab.core.thing.binding.ThingHandlerCallback;
 
 /**
@@ -141,5 +146,93 @@ class TractiveTrackerHandlerSharedBudgetTest {
 
         verifyNoInteractions(httpClient);
         verify(callback, never()).stateUpdated(eq(MODEL_NUMBER_CHANNEL_UID), any());
+    }
+
+    /**
+     * Configures {@code handler} for the "recurringPollEnabled == false, bucket believed empty, HTTP 429" scenario
+     * shared by the four {@code budgetDenied...WithRecurringDisabled...} tests below: forces
+     * {@code recurringPollEnabled} to {@code false} (the real-world default), reflectively injects a scheduler that
+     * runs {@link TractiveRetryUtil}'s retry tasks synchronously (avoiding a real 6 s wait per attempt), and stubs
+     * the HTTP response to 429.
+     *
+     * @return a mocked {@link SharedRateLimitBucket} whose {@code tryConsume()} always reports empty
+     */
+    private SharedRateLimitBucket setUpRecurringDisabledWithEmptyBucketAnd429Response() throws Exception {
+        Field recurringPollEnabledField = TractiveTrackerHandler.class.getDeclaredField("recurringPollEnabled");
+        recurringPollEnabledField.setAccessible(true);
+        recurringPollEnabledField.set(handler, false);
+
+        ScheduledExecutorService mockScheduler = mock(ScheduledExecutorService.class);
+        lenient().when(mockScheduler.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class))).thenAnswer(inv -> {
+            ((Runnable) inv.getArgument(0)).run();
+            return mock(ScheduledFuture.class);
+        });
+        Field schedulerField = BaseThingHandler.class.getDeclaredField("scheduler");
+        schedulerField.setAccessible(true);
+        schedulerField.set(handler, mockScheduler);
+
+        SharedRateLimitBucket mockBucket = mock(SharedRateLimitBucket.class);
+        when(mockBucket.tryConsume()).thenReturn(false);
+        when(bridge.getGraphApiRateLimitBucket()).thenReturn(mockBucket);
+        when(response.getStatus()).thenReturn(HttpStatus.TOO_MANY_REQUESTS_429);
+        return mockBucket;
+    }
+
+    /**
+     * See {@link #setUpRecurringDisabledWithEmptyBucketAnd429Response} -- this is the {@code pollTrackerDetails}
+     * instance, one of four call sites sharing {@code tryConsumeSharedBudget}'s bypass-gate behavior.
+     */
+    @Test
+    void budgetDeniedWithRecurringDisabledProceedsAnywayButNeverDepletesTheBucket() throws Exception {
+        SharedRateLimitBucket mockBucket = setUpRecurringDisabledWithEmptyBucketAnd429Response();
+
+        handler.pollTrackerDetails(bridge);
+
+        verify(httpClient, atLeastOnce()).newRequest(anyString());
+        verify(mockBucket, never()).deplete(anyLong());
+    }
+
+    /**
+     * See {@link #setUpRecurringDisabledWithEmptyBucketAnd429Response} -- this is the {@code pollHwReport} instance.
+     */
+    @Test
+    void hwReportBudgetDeniedWithRecurringDisabledProceedsAnywayButNeverDepletesTheBucket() throws Exception {
+        SharedRateLimitBucket mockBucket = setUpRecurringDisabledWithEmptyBucketAnd429Response();
+
+        handler.pollHwReport(bridge);
+
+        verify(httpClient, atLeastOnce()).newRequest(anyString());
+        verify(mockBucket, never()).deplete(anyLong());
+    }
+
+    /**
+     * See {@link #setUpRecurringDisabledWithEmptyBucketAnd429Response} -- this is the {@code pollPositionReport}
+     * instance. Unlike the other three call sites, {@code pollPositionReport} gates on the cached
+     * {@code positionGroupLinked} field rather than a live {@code isLinked()} check, so it needs reflectively
+     * forcing to {@code true} first -- it defaults to {@code false} since these tests never call {@code initialize()}.
+     */
+    @Test
+    void positionReportBudgetDeniedWithRecurringDisabledProceedsAnywayButNeverDepletesTheBucket() throws Exception {
+        Field positionGroupLinkedField = TractiveTrackerHandler.class.getDeclaredField("positionGroupLinked");
+        positionGroupLinkedField.setAccessible(true);
+        positionGroupLinkedField.set(handler, true);
+
+        SharedRateLimitBucket mockBucket = setUpRecurringDisabledWithEmptyBucketAnd429Response();
+
+        handler.pollPositionReport(bridge);
+
+        verify(httpClient, atLeastOnce()).newRequest(anyString());
+        verify(mockBucket, never()).deplete(anyLong());
+    }
+
+    /** See {@link #setUpRecurringDisabledWithEmptyBucketAnd429Response} -- this is the {@code pollProfile} instance. */
+    @Test
+    void profileBudgetDeniedWithRecurringDisabledProceedsAnywayButNeverDepletesTheBucket() throws Exception {
+        SharedRateLimitBucket mockBucket = setUpRecurringDisabledWithEmptyBucketAnd429Response();
+
+        handler.pollProfile(bridge);
+
+        verify(httpClient, atLeastOnce()).newRequest(anyString());
+        verify(mockBucket, never()).deplete(anyLong());
     }
 }

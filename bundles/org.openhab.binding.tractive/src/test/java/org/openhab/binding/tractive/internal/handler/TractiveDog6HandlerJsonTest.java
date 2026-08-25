@@ -23,6 +23,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -67,10 +68,13 @@ import com.google.gson.JsonObject;
 @ExtendWith(MockitoExtension.class)
 class TractiveDog6HandlerJsonTest {
 
-    private static final ThingUID THING_UID = new ThingUID(TractiveBindingConstants.THING_TYPE_DOG6, "Samson");
-
+    private static final double SAMSON_WEIGHT = 21000.0;
+    private static final double SAMSON_HEIGHT = 0.56;
+    private static final long SAMSON_DATE_OF_BIRTH = 630669600L;
     private static final double SAMSON_LAT = 51.15156499765719;
     private static final double SAMSON_LON = 4.476487652479988;
+
+    private static final ThingUID THING_UID = new ThingUID(TractiveBindingConstants.THING_TYPE_DOG6, "Samson");
 
     @Mock
     private @NonNullByDefault({}) Thing thing;
@@ -115,8 +119,11 @@ class TractiveDog6HandlerJsonTest {
         return result;
     }
 
-    /** Builds a tracker_status-shaped event with a buzzer_control object and (optionally) tracker_state_reason. */
-    private JsonObject buzzerControlEvent(boolean active, @Nullable Double remaining,
+    /**
+     * Builds a tracker_status-shaped event with a control object under {@code field} and (optionally)
+     * tracker_state_reason.
+     */
+    private JsonObject controlEvent(String field, boolean active, @Nullable Double remaining,
             @Nullable String trackerStateReason) {
         JsonObject control = new JsonObject();
         control.addProperty(TractiveBindingConstants.FIELD_ACTIVE, active);
@@ -124,11 +131,29 @@ class TractiveDog6HandlerJsonTest {
             control.addProperty(TractiveBindingConstants.FIELD_REMAINING, remaining);
         }
         JsonObject event = new JsonObject();
-        event.add(TractiveBindingConstants.COMMAND_BUZZER_CONTROL, control);
+        event.add(field, control);
         if (trackerStateReason != null) {
             event.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_REASON, trackerStateReason);
         }
         return event;
+    }
+
+    /** Builds a tracker_status-shaped event with a buzzer_control object and (optionally) tracker_state_reason. */
+    private JsonObject buzzerControlEvent(boolean active, @Nullable Double remaining,
+            @Nullable String trackerStateReason) {
+        return controlEvent(TractiveBindingConstants.COMMAND_BUZZER_CONTROL, active, remaining, trackerStateReason);
+    }
+
+    /** Builds a tracker_status-shaped event with a led_control object and (optionally) tracker_state_reason. */
+    private JsonObject ledControlEvent(boolean active, @Nullable Double remaining,
+            @Nullable String trackerStateReason) {
+        return controlEvent(TractiveBindingConstants.COMMAND_LED_CONTROL, active, remaining, trackerStateReason);
+    }
+
+    /** Builds a tracker_status-shaped event with a live_tracking object and (optionally) tracker_state_reason. */
+    private JsonObject liveTrackingControlEvent(boolean active, @Nullable Double remaining,
+            @Nullable String trackerStateReason) {
+        return controlEvent(TractiveBindingConstants.COMMAND_LIVE_TRACKING, active, remaining, trackerStateReason);
     }
 
     @Test
@@ -197,6 +222,121 @@ class TractiveDog6HandlerJsonTest {
 
         assertDoesNotThrow(() -> handler.applyHealthOverview(json));
         verify(callback, never()).stateUpdated(any(ChannelUID.class), any(State.class));
+    }
+
+    @Test
+    void applyProfileNewFieldsUpdatesAllChannels() {
+        JsonObject details = new JsonObject();
+        details.addProperty(TractiveBindingConstants.FIELD_PET_TYPE, "DOG");
+        details.addProperty(TractiveBindingConstants.FIELD_CHIP_ID, "985121012345678");
+        details.addProperty(TractiveBindingConstants.FIELD_LIM, 12.5);
+        details.addProperty(TractiveBindingConstants.FIELD_RIBCAGE, 34.0);
+        details.addProperty(TractiveBindingConstants.FIELD_INSTAGRAM_USERNAME, "samson_the_dog");
+        details.addProperty(TractiveBindingConstants.FIELD_WEIGHT_IS_DEFAULT, false);
+        details.addProperty(TractiveBindingConstants.FIELD_HEIGHT_IS_DEFAULT, true);
+        details.addProperty(TractiveBindingConstants.FIELD_PROFILE_PICTURE_ID, "abc123");
+        JsonArray galleryIds = new JsonArray();
+        galleryIds.add("pic1");
+        galleryIds.add("pic2");
+        details.add(TractiveBindingConstants.FIELD_GALLERY_PICTURE_IDS, galleryIds);
+
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_LEADERBOARD_OPT_OUT, false);
+        json.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, true);
+        json.addProperty(TractiveBindingConstants.FIELD_CREATED_AT, 1712325806L);
+        json.addProperty(TractiveBindingConstants.FIELD_IS_WALK_SHARING_CONSENT_PROVIDED, false);
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyProfile(json));
+
+        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_LEADERBOARD_OPT_OUT));
+        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_PROFILE_READ_ONLY));
+        assertEquals(Instant.ofEpochSecond(1712325806L),
+                ((DateTimeType) Objects
+                        .requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_PROFILE_CREATED_AT)))
+                        .getInstant());
+        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_WALK_SHARING_CONSENT));
+        assertEquals(new StringType("DOG"), updates.get(TractiveBindingConstants.CHANNEL_PET_TYPE));
+        assertEquals(new StringType("985121012345678"), updates.get(TractiveBindingConstants.CHANNEL_CHIP_ID));
+        assertEquals(12.5, ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_LIM)))
+                .doubleValue());
+        assertEquals(34.0,
+                ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_RIBCAGE)))
+                        .doubleValue());
+        assertEquals(new StringType("samson_the_dog"),
+                updates.get(TractiveBindingConstants.CHANNEL_INSTAGRAM_USERNAME));
+        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_WEIGHT_IS_DEFAULT));
+        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_HEIGHT_IS_DEFAULT));
+        assertEquals(new StringType("abc123"), updates.get(TractiveBindingConstants.CHANNEL_PROFILE_PICTURE_ID));
+        assertEquals(new StringType("pic1,pic2"), updates.get(TractiveBindingConstants.CHANNEL_GALLERY_PICTURE_IDS));
+    }
+
+    @Test
+    void applyProfilePreExistingFieldsUpdatesAllChannels() {
+        JsonObject details = new JsonObject();
+        details.addProperty(TractiveBindingConstants.FIELD_GENDER, "M");
+        details.addProperty(TractiveBindingConstants.FIELD_BIRTHDAY, SAMSON_DATE_OF_BIRTH);
+        details.addProperty(TractiveBindingConstants.FIELD_HEIGHT, SAMSON_HEIGHT);
+        details.addProperty(TractiveBindingConstants.FIELD_WEIGHT, SAMSON_WEIGHT);
+        details.addProperty(TractiveBindingConstants.FIELD_NEUTERED, true);
+        JsonArray breedIds = new JsonArray();
+        breedIds.add("925");
+        details.add(TractiveBindingConstants.FIELD_BREED_IDS, breedIds);
+
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+        JsonArray homeLocation = new JsonArray();
+        homeLocation.add(51.2038919);
+        homeLocation.add(4.7111879);
+        json.add(TractiveBindingConstants.FIELD_HOME_LOCATION, homeLocation);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyProfile(json));
+
+        assertEquals(new StringType("M"), updates.get(TractiveBindingConstants.CHANNEL_GENDER));
+        assertEquals(Instant.ofEpochSecond(SAMSON_DATE_OF_BIRTH),
+                ((DateTimeType) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_BIRTHDAY)))
+                        .getInstant());
+        assertEquals(SAMSON_HEIGHT,
+                ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_HEIGHT)))
+                        .doubleValue());
+        assertEquals(SAMSON_WEIGHT,
+                ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_WEIGHT)))
+                        .doubleValue());
+        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_NEUTERED));
+        assertEquals(new StringType("925"), updates.get(TractiveBindingConstants.CHANNEL_BREED_IDS));
+        assertEquals(new PointType(new DecimalType(51.2038919), new DecimalType(4.7111879)),
+                updates.get(TractiveBindingConstants.CHANNEL_HOME_LOCATION));
+    }
+
+    @Test
+    void applyProfileDetailsReadOnlyIsNotSurfacedAsItsOwnChannel() {
+        JsonObject details = new JsonObject();
+        details.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, true);
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, false);
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyProfile(json));
+
+        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_PROFILE_READ_ONLY));
+    }
+
+    @Test
+    void applyProfileNewFieldsNullValuesNoExceptionNoUpdates() {
+        JsonObject details = new JsonObject();
+        details.add(TractiveBindingConstants.FIELD_LIM, JsonNull.INSTANCE);
+        details.add(TractiveBindingConstants.FIELD_RIBCAGE, JsonNull.INSTANCE);
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_READ_ONLY, JsonNull.INSTANCE);
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+
+        assertDoesNotThrow(() -> handler.applyProfile(json));
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIM)),
+                any(State.class));
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_RIBCAGE)),
+                any(State.class));
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_PROFILE_READ_ONLY)), any(State.class));
     }
 
     @Test
@@ -567,6 +707,171 @@ class TractiveDog6HandlerJsonTest {
     @Test
     void buzzerActiveWithZeroRemainingDoesNotScheduleAutoOff() {
         handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, buzzerControlEvent(true, 0.0, null));
+
+        verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void onChannelEventTrackerStatusLedActiveSchedulesAutoOffAfterRemainingSeconds() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 42.5, null));
+
+        verify(mockScheduler).schedule(any(Runnable.class), eq(42500L), eq(TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    void ledPredictedAutoOffFiresButSkipsUpdateWhenNotDormant() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 0.05, null));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+        task.getValue().run();
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LED)),
+                eq(OnOffType.OFF));
+    }
+
+    @Test
+    void ledPredictedAutoOffFiresAndPushesOffWhenDormant() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                ledControlEvent(true, 0.05, TractiveBindingConstants.VALUE_STATE_REASON_POWER_SAVING));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+        task.getValue().run();
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LED)),
+                eq(OnOffType.OFF));
+    }
+
+    @Test
+    void ledFreshConfirmationCancelsAndReschedulesPreviousAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 300.0, null));
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 250.0, null));
+
+        assertEquals(2, scheduledFutures.size());
+        verify(scheduledFutures.get(0)).cancel(false);
+        verify(mockScheduler, times(2)).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void ledRealConfirmedOffCancelsPendingAutoOffWithoutRescheduling() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 300.0, null));
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(false, null, null));
+
+        assertEquals(1, scheduledFutures.size());
+        verify(scheduledFutures.get(0)).cancel(false);
+        verify(mockScheduler, times(1)).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void ledStartFailedCancelsPendingAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 300.0, null));
+
+        JsonObject startFailed = new JsonObject();
+        startFailed.addProperty(TractiveBindingConstants.FIELD_COMMAND_TYPE,
+                TractiveBindingConstants.VALUE_COMMAND_TYPE_LED);
+        handler.applyStartFailed(startFailed);
+
+        verify(scheduledFutures.get(0)).cancel(false);
+    }
+
+    @Test
+    void ledActiveWithoutRemainingFieldDoesNotScheduleAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, null, null));
+
+        verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void ledActiveWithZeroRemainingDoesNotScheduleAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 0.0, null));
+
+        verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void onChannelEventTrackerStatusLiveTrackingActiveSchedulesAutoOffAfterRemainingSeconds() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 42.5, null));
+
+        verify(mockScheduler).schedule(any(Runnable.class), eq(42500L), eq(TimeUnit.MILLISECONDS));
+    }
+
+    @Test
+    void liveTrackingPredictedAutoOffFiresButSkipsUpdateWhenNotDormant() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 0.05, null));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+        task.getValue().run();
+
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIVE_TRACKING)), eq(OnOffType.OFF));
+    }
+
+    @Test
+    void liveTrackingPredictedAutoOffFiresAndPushesOffWhenDormant() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 0.05, TractiveBindingConstants.VALUE_STATE_REASON_POWER_SAVING));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+        task.getValue().run();
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIVE_TRACKING)),
+                eq(OnOffType.OFF));
+    }
+
+    @Test
+    void liveTrackingFreshConfirmationCancelsAndReschedulesPreviousAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 300.0, null));
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 250.0, null));
+
+        assertEquals(2, scheduledFutures.size());
+        verify(scheduledFutures.get(0)).cancel(false);
+        verify(mockScheduler, times(2)).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void liveTrackingRealConfirmedOffCancelsPendingAutoOffWithoutRescheduling() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 300.0, null));
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(false, null, null));
+
+        assertEquals(1, scheduledFutures.size());
+        verify(scheduledFutures.get(0)).cancel(false);
+        verify(mockScheduler, times(1)).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void liveTrackingStartFailedCancelsPendingAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 300.0, null));
+
+        JsonObject startFailed = new JsonObject();
+        startFailed.addProperty(TractiveBindingConstants.FIELD_COMMAND_TYPE,
+                TractiveBindingConstants.VALUE_COMMAND_TYPE_LIVE_TRACKING);
+        handler.applyStartFailed(startFailed);
+
+        verify(scheduledFutures.get(0)).cancel(false);
+    }
+
+    @Test
+    void liveTrackingActiveWithoutRemainingFieldDoesNotScheduleAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, null, null));
+
+        verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void liveTrackingActiveWithZeroRemainingDoesNotScheduleAutoOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 0.0, null));
 
         verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
     }

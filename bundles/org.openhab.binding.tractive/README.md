@@ -146,13 +146,16 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 > There may be a delay between sending a command and the tracker responding physically.
 >
 > **Note 2:** The Item state reflects the last _confirmed_ device state, pushed asynchronously over the real-time channel — not the immediate response to the command itself, which is not reliable (see Note 1).
-> If Tractive reports that a command timed out before the tracker ever executed it, the binding forces the Item back to `OFF`; this is confirmed correct for a failed _activation_ (turning the feature on), but a failed _deactivation_ would also force the Item to `OFF`, which could be wrong if the device is actually still on — the failure message doesn't say which direction failed, and that case is unverified.
-> If no resolution (success or failure) ever arrives at all, the Item is left showing openHAB's initial optimistic guess indefinitely.
-> This note still needs work!
+> If Tractive later reports that a command timed out before the tracker ever executed it, the binding forces the Item to `OFF`; this is confirmed correct for a failed _activation_.
+> A failed _deactivation_ would, in principle, also force the Item to `OFF` incorrectly if the device is still on, since the failure message doesn't indicate direction — but deactivation commands don't appear to produce this message at all; they queue with no cloud confirmation, relying instead on the local auto-off prediction (see below, covering all three command channels) to correct the Item once its own hardware timer would have expired regardless.
 >
 > **Note 3:** The `-timeout` and `-remaining` channels are only updated by the real-time channel push, not by REST polling — the command endpoints' own synchronous HTTP response is not reliable (see Note 2), so there is nothing safe to poll for these two fields.
 >
-> **Note 4:** The tracker's physical button may be able to silence an active buzzer locally — but this is not yet confirmed. Real-world testing so far shows the buzzer eventually reading `OFF` after a button press, but with **no corresponding real-time push, no REST poll showing fresh data, and no `start_failed` message** anywhere around the press. The leading theory is that the button stops the buzzer without the tracker ever reporting that fact back to the cloud, meaning the Item may keep showing `ON` for a while after the buzzer has actually already stopped — but a coincidental, unrelated resolution around the same time hasn't been ruled out either. **This needs dedicated, controlled testing** (press the button with no other command in flight, and confirm whether the logs show literally nothing) before this behavior can be documented with confidence.
+> **Note 4:** The tracker's physical button silences an active buzzer and reports that fact back to the cloud.
+>
+> **Note 5:** Buzzer/LED activation from the official Tractive app can succeed even when the same command sent through this binding times out on the same tracker at the same time.
+> The app has a separate command path over Bluetooth (BLE) directly to the tracker when your phone is in range (the tracker's `capabilities` list includes `BUZZER_BLE`/`LED_BLE`).
+> This binding runs independently of any phone and has no Bluetooth radio, so it has no access to this path — commands sent through openHAB are always subject to the cloud queuing/timeout behavior in Note 1/Note 2, with no BLE shortcut available.
 
 ### Group `health`
 
@@ -181,16 +184,29 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 
 ### Group `profile`
 
-| Channel ID              | Type          | R/W | Advanced | Description                                  |
-| ----------------------- | ------------- | --- | -------- | -------------------------------------------- |
-| `profile#breed-ids`     | String        | R   | Yes      | Comma-separated Tractive breed-catalog ID(s) |
-| `profile#gender`        | String        | R   | Yes      | The pet's sex (`M`/`F`)                      |
-| `profile#birthday`      | DateTime      | R   | Yes      | The pet's date of birth                      |
-| `profile#height`        | Number:Length | R   | Yes      | The pet's height                             |
-| `profile#weight`        | Number:Mass   | R   | Yes      | The pet's weight                             |
-| `profile#neutered`      | Switch        | R   | Yes      | Whether the pet is spayed/neutered           |
-| `profile#home-location` | Location      | R   | Yes      | The pet's configured home location           |
-| `profile#last-updated`  | DateTime      | R   | Yes      | When this group was last fetched             |
+| Channel ID                     | Type          | R/W | Advanced | Description                                                                        |
+| ------------------------------ | ------------- | --- | -------- | ---------------------------------------------------------------------------------- |
+| `profile#breed-ids`            | String        | R   | Yes      | Comma-separated Tractive breed-catalog ID(s)                                       |
+| `profile#gender`               | String        | R   | Yes      | The pet's sex (`M`/`F`)                                                            |
+| `profile#birthday`             | DateTime      | R   | Yes      | The pet's date of birth                                                            |
+| `profile#height`               | Number:Length | R   | Yes      | The pet's height                                                                   |
+| `profile#weight`               | Number:Mass   | R   | Yes      | The pet's weight                                                                   |
+| `profile#neutered`             | Switch        | R   | Yes      | Whether the pet is spayed/neutered                                                 |
+| `profile#home-location`        | Location      | R   | Yes      | The pet's configured home location                                                 |
+| `profile#last-updated`         | DateTime      | R   | Yes      | When this group was last fetched                                                   |
+| `profile#leaderboard-opt-out`  | Switch        | R   | Yes      | Whether the owner opted this pet out of Tractive's leaderboard/community feature   |
+| `profile#read-only`            | Switch        | R   | Yes      | Whether the authenticated account only has shared/invited-level access to this pet |
+| `profile#created-at`           | DateTime      | R   | Yes      | When this pet profile was first created in Tractive                                |
+| `profile#pet-type`             | String        | R   | Yes      | The pet's species (e.g. `DOG`)                                                     |
+| `profile#chip-id`              | String        | R   | Yes      | The pet's microchip ID, if entered in the app                                      |
+| `profile#lim`                  | Number:Length | R   | Yes      | Leg Index Measurement (FBMI input) — only populated for cats                       |
+| `profile#ribcage`              | Number:Length | R   | Yes      | Ribcage circumference (FBMI input) — only populated for cats                       |
+| `profile#instagram-username`   | String        | R   | Yes      | The pet's linked Instagram handle, if set                                          |
+| `profile#weight-is-default`    | Switch        | R   | Yes      | Whether `profile#weight` is a real value or a breed-average default                |
+| `profile#height-is-default`    | Switch        | R   | Yes      | Whether `profile#height` is a real value or a breed-average default                |
+| `profile#profile-picture-id`   | String        | R   | Yes      | ID of the pet's profile photo asset                                                |
+| `profile#gallery-picture-ids`  | String        | R   | Yes      | Comma-separated IDs of the pet's gallery photo assets                              |
+| `profile#walk-sharing-consent` | Switch        | R   | Yes      | Whether the owner consented to sharing this pet's walk data                        |
 
 > **Note:** This group holds mostly-static pet-profile data from the Tractive app (breed, birthday, weight, etc.).
 > It is **not** part of the timed polling schedule (`refreshInterval`) — it's populated once when the Thing is created, and after that only updates when something explicitly asks for it: the `refreshProfile()` action, or a `REFRESH` command sent to any channel on this Thing (e.g. clicking refresh in the UI).
@@ -298,6 +314,19 @@ Number:Mass   samson_Weight                "Samson Weight"                      
 Switch        samson_Neutered              "Samson Neutered"                          ["Status"] { channel="tractive:dog-6:gert:samson:profile#neutered" }
 Location      samson_HomeLocation          "Samson Home Location"                     ["GeoLocation", "Measurement"] { channel="tractive:dog-6:gert:samson:profile#home-location" }
 DateTime      samson_ProfileLastUpdated    "Samson Profile Last Updated"              ["Point", "Timestamp"] { channel="tractive:dog-6:gert:samson:profile#last-updated" }
+Switch        samson_LeaderboardOptOut     "Samson Leaderboard Opt-Out"               ["Point"] { channel="tractive:dog-6:gert:samson:profile#leaderboard-opt-out" }
+Switch        samson_ReadOnly              "Samson Read Only"                         ["Status"] { channel="tractive:dog-6:gert:samson:profile#read-only" }
+DateTime      samson_ProfileCreatedAt      "Samson Profile Created At"                ["Point", "Timestamp"] { channel="tractive:dog-6:gert:samson:profile#created-at" }
+String        samson_PetType               "Samson Pet Type"                          ["Point"] { channel="tractive:dog-6:gert:samson:profile#pet-type" }
+String        samson_ChipId                "Samson Microchip ID"                      ["Point"] { channel="tractive:dog-6:gert:samson:profile#chip-id" }
+Number:Length samson_Lim                   "Samson LIM"                               ["Point"] { channel="tractive:dog-6:gert:samson:profile#lim" }
+Number:Length samson_Ribcage               "Samson Ribcage Circumference"             ["Point"] { channel="tractive:dog-6:gert:samson:profile#ribcage" }
+String        samson_InstagramUsername     "Samson Instagram Username"                ["Point"] { channel="tractive:dog-6:gert:samson:profile#instagram-username" }
+Switch        samson_WeightIsDefault       "Samson Weight Is Default"                 ["Point"] { channel="tractive:dog-6:gert:samson:profile#weight-is-default" }
+Switch        samson_HeightIsDefault       "Samson Height Is Default"                 ["Point"] { channel="tractive:dog-6:gert:samson:profile#height-is-default" }
+String        samson_ProfilePictureId      "Samson Profile Picture ID"                ["Point"] { channel="tractive:dog-6:gert:samson:profile#profile-picture-id" }
+String        samson_GalleryPictureIds     "Samson Gallery Picture IDs"               ["Point"] { channel="tractive:dog-6:gert:samson:profile#gallery-picture-ids" }
+Switch        samson_WalkSharingConsent    "Samson Walk Sharing Consent"              ["Point"] { channel="tractive:dog-6:gert:samson:profile#walk-sharing-consent" }
 ```
 
 ### `tractive.rules`

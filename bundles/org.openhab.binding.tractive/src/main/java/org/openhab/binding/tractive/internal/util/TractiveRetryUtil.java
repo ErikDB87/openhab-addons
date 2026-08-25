@@ -76,8 +76,9 @@ public class TractiveRetryUtil {
             ContentResponse response = requestFactory.get().send();
             int status = response.getStatus();
             boolean isRateLimited = status == HttpStatus.TOO_MANY_REQUESTS_429;
+            boolean isSuccess = status == HttpStatus.OK_200;
             logger.trace("Attempt {}/{} → HTTP {}{}", attemptNum, MAX_RETRIES, status,
-                    isRateLimited ? "" : " (not a 429, no further attempts will be made)");
+                    (isRateLimited || isSuccess) ? "" : " (no further attempts will be made)");
             if (!isRateLimited) {
                 return CompletableFuture.completedFuture(response);
             }

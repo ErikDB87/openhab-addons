@@ -197,6 +197,72 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_HOME_LOCATION = "profile#home-location";
     /** Channel ID for when the Profile channel group was last fetched. */
     public static final String CHANNEL_PROFILE_LAST_UPDATED = "profile#last-updated";
+    /**
+     * Channel ID for whether the owner opted this pet out of Tractive's activity-leaderboard/community feature.
+     * Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_LEADERBOARD_OPT_OUT = "profile#leaderboard-opt-out";
+    /**
+     * Channel ID for whether the authenticated account has owner-level (as opposed to shared/invited-account)
+     * permission on this pet. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_PROFILE_READ_ONLY = "profile#read-only";
+    /**
+     * Channel ID for when this pet profile was first created in Tractive. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_PROFILE_CREATED_AT = "profile#created-at";
+    /**
+     * Channel ID for the pet's species (e.g. {@code DOG}). Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_PET_TYPE = "profile#pet-type";
+    /**
+     * Channel ID for the pet's microchip ID, if entered in the app. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_CHIP_ID = "profile#chip-id";
+    /**
+     * Channel ID for the pet's Leg Index Measurement (LIM), one of two inputs to the Feline Body Mass Index (FBMI)
+     * -- always {@code null} for a {@code DOG} {@link #CHANNEL_PET_TYPE}, since FBMI is a cat-specific formula.
+     * Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_LIM = "profile#lim";
+    /**
+     * Channel ID for the pet's ribcage circumference, the other FBMI input alongside {@link #CHANNEL_LIM}. Same
+     * dog/cat caveat applies. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_RIBCAGE = "profile#ribcage";
+    /**
+     * Channel ID for the pet's linked Instagram handle, if set. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_INSTAGRAM_USERNAME = "profile#instagram-username";
+    /**
+     * Channel ID for whether {@code profile#weight} is a real user-entered value or a breed-average default. Only
+     * refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_WEIGHT_IS_DEFAULT = "profile#weight-is-default";
+    /**
+     * Channel ID for whether {@code profile#height} is a real user-entered value or a breed-average default. Only
+     * refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_HEIGHT_IS_DEFAULT = "profile#height-is-default";
+    /**
+     * Channel ID for the ID referencing the pet's profile photo in Tractive's media storage. Only refreshed at
+     * Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_PROFILE_PICTURE_ID = "profile#profile-picture-id";
+    /**
+     * Channel ID for a comma-separated list of IDs referencing the pet's gallery photos. Only refreshed at Thing
+     * setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_GALLERY_PICTURE_IDS = "profile#gallery-picture-ids";
+    /**
+     * Channel ID for whether the owner consented to sharing this pet's walk data, a Tractive community/walk-sharing
+     * feature. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String CHANNEL_WALK_SHARING_CONSENT = "profile#walk-sharing-consent";
 
     /** JSON field name for the account email in the {@code POST auth/token} request body. */
     public static final String FIELD_PLATFORM_EMAIL = "platform_email";
@@ -420,6 +486,51 @@ public class TractiveBindingConstants {
      * {@code trackable_object/{petId}}.
      */
     public static final String FIELD_HOME_LOCATION = "home_location";
+    /**
+     * JSON field name for whether this pet is opted out of Tractive's activity-leaderboard feature, in
+     * {@code trackable_object/{petId}}.
+     */
+    public static final String FIELD_LEADERBOARD_OPT_OUT = "leaderboard_opt_out";
+    /**
+     * JSON field name for account-level ownership/permission on this pet, in {@code trackable_object/{petId}}
+     * (top-level and, identically, {@link #FIELD_DETAILS}-nested -- only the top-level copy is read, since the two
+     * were confirmed to always agree).
+     */
+    public static final String FIELD_READ_ONLY = "read_only";
+    /** JSON field name for when this pet profile was created, in {@code trackable_object/{petId}}. */
+    public static final String FIELD_CREATED_AT = "created_at";
+    /** JSON field name for the pet's species, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_PET_TYPE = "pet_type";
+    /** JSON field name for the pet's microchip ID, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_CHIP_ID = "chip_id";
+    /**
+     * JSON field name for the pet's Leg Index Measurement, inside {@link #FIELD_DETAILS} -- see
+     * {@link #CHANNEL_LIM} for what this measures.
+     */
+    public static final String FIELD_LIM = "lim";
+    /** JSON field name for the pet's ribcage circumference, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_RIBCAGE = "ribcage";
+    /** JSON field name for the pet's linked Instagram handle, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_INSTAGRAM_USERNAME = "instagram_username";
+    /**
+     * JSON field name for whether {@link #FIELD_WEIGHT} is a real value or a breed-average default, inside
+     * {@link #FIELD_DETAILS}.
+     */
+    public static final String FIELD_WEIGHT_IS_DEFAULT = "weight_is_default";
+    /**
+     * JSON field name for whether {@link #FIELD_HEIGHT} is a real value or a breed-average default, inside
+     * {@link #FIELD_DETAILS}.
+     */
+    public static final String FIELD_HEIGHT_IS_DEFAULT = "height_is_default";
+    /** JSON field name for the ID of the pet's profile photo asset, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_PROFILE_PICTURE_ID = "profile_picture_id";
+    /** JSON field name for the array of IDs of the pet's gallery photo assets, inside {@link #FIELD_DETAILS}. */
+    public static final String FIELD_GALLERY_PICTURE_IDS = "gallery_picture_ids";
+    /**
+     * JSON field name for whether the owner consented to sharing this pet's walk data, in
+     * {@code trackable_object/{petId}}.
+     */
+    public static final String FIELD_IS_WALK_SHARING_CONSENT_PROVIDED = "is_walk_sharing_consent_provided";
 
     /**
      * Tracker command name for the buzzer; also the {@link #MESSAGE_TRACKER_STATUS} field name carrying its confirmed

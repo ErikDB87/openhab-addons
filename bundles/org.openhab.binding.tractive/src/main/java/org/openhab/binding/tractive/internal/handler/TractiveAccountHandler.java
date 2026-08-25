@@ -68,8 +68,8 @@ import com.google.gson.JsonParser;
 public class TractiveAccountHandler extends BaseBridgeHandler {
 
     private static final long TOKEN_REFRESH_INTERVAL_MINUTES = 10;
-    private static final long CHANNEL_RECONNECT_INITIAL_DELAY_S = 15;
-    private static final long CHANNEL_RECONNECT_MAX_DELAY_S = 300;
+    private static final long RECONNECT_INITIAL_DELAY_S = 15;
+    private static final long RECONNECT_MAX_DELAY_S = 300;
 
     private final Logger logger = LoggerFactory.getLogger(TractiveAccountHandler.class);
     private final HttpClient httpClient;
@@ -81,7 +81,8 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private @Nullable String userId;
     private volatile @Nullable TractiveAccountConfiguration config;
     private long expiresAt;
-    private long channelReconnectDelaySeconds = CHANNEL_RECONNECT_INITIAL_DELAY_S;
+    private long channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private long bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
 
     private volatile @Nullable TractiveDiscoveryService discoveryService;
 
@@ -119,7 +120,11 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     @Override
     public void initialize() {
         updateStatus(ThingStatus.UNKNOWN);
-        taskTracker.track(scheduler.schedule(this::initializeBridge, 0, TimeUnit.SECONDS));
+        scheduleInitializeBridge(0);
+    }
+
+    private void scheduleInitializeBridge(long delaySeconds) {
+        taskTracker.track(scheduler.schedule(this::initializeBridge, delaySeconds, TimeUnit.SECONDS));
     }
 
     private void initializeBridge() {
@@ -133,7 +138,8 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         try {
             authenticate(localConfig.email, localConfig.password, accessToken);
             updateStatus(ThingStatus.ONLINE);
-            channelReconnectDelaySeconds = CHANNEL_RECONNECT_INITIAL_DELAY_S;
+            bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+            channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
 
             TractiveDiscoveryService discovery = discoveryService;
             if (discovery != null) {
@@ -149,6 +155,9 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         } catch (IOException e) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
                     "Authentication failed: " + e.getMessage());
+            long nextDelay = bridgeAuthRetryDelaySeconds;
+            bridgeAuthRetryDelaySeconds = Math.min(bridgeAuthRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+            scheduleInitializeBridge(nextDelay);
         }
     }
 
@@ -170,9 +179,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
                 ioe.initCause(e);
                 throw ioe;
             } catch (TimeoutException e) {
-                InterruptedIOException ioe = new InterruptedIOException("Authentication request timed out");
-                ioe.initCause(e);
-                throw ioe;
+                throw new IOException("Authentication request timed out: " + e.getMessage(), e);
             } catch (ExecutionException e) {
                 throw new IOException("Authentication request failed: " + e.getMessage(), e);
             }
@@ -227,46 +234,40 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
             }
             try {
                 channelListener.run(httpClient, token, uid);
-                // Stream ended cleanly — reconnect with reset backoff
-                channelReconnectDelaySeconds = CHANNEL_RECONNECT_INITIAL_DELAY_S;
-                scheduleChannelConnect(channelListener, CHANNEL_RECONNECT_INITIAL_DELAY_S);
+                channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+                scheduleChannelConnect(channelListener, RECONNECT_INITIAL_DELAY_S);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
             } catch (TractiveKeepAliveTimeoutException e) {
                 logger.debug("Channel keep-alive stale, reconnecting: {}", e.getMessage());
-                scheduleChannelConnect(channelListener, CHANNEL_RECONNECT_INITIAL_DELAY_S);
+                scheduleChannelConnect(channelListener, RECONNECT_INITIAL_DELAY_S);
             } catch (TractiveChannelAuthException e) {
                 logger.warn("{}, triggering re-auth", e.getMessage());
                 refreshToken(token);
                 long nextDelay = channelReconnectDelaySeconds;
-                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2,
-                        CHANNEL_RECONNECT_MAX_DELAY_S);
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
                 scheduleChannelConnect(channelListener, nextDelay);
             } catch (InterruptedIOException e) {
                 logger.debug("Channel connection timed out: {}", e.getMessage());
                 long nextDelay = channelReconnectDelaySeconds;
-                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2,
-                        CHANNEL_RECONNECT_MAX_DELAY_S);
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
                 scheduleChannelConnect(channelListener, nextDelay);
             } catch (IOException e) {
                 logger.debug("Channel disconnected: {}", e.getMessage());
                 long nextDelay = channelReconnectDelaySeconds;
-                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2,
-                        CHANNEL_RECONNECT_MAX_DELAY_S);
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
                 scheduleChannelConnect(channelListener, nextDelay);
             } catch (RuntimeException e) {
                 logger.warn("Unexpected error in channel listener: {}", e.getMessage());
                 long nextDelay = channelReconnectDelaySeconds;
-                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2,
-                        CHANNEL_RECONNECT_MAX_DELAY_S);
+                channelReconnectDelaySeconds = Math.min(channelReconnectDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
                 scheduleChannelConnect(channelListener, nextDelay);
             }
         }, delaySeconds, TimeUnit.SECONDS));
     }
 
     private void dispatchChannelEvent(JsonObject event) {
-        // Reset reconnect back-off: we're actively receiving data
-        channelReconnectDelaySeconds = CHANNEL_RECONNECT_INITIAL_DELAY_S;
+        channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
 
         String messageType = event.has(FIELD_MESSAGE) ? event.get(FIELD_MESSAGE).getAsString() : "";
         String targetId = resolveTargetId(event, messageType);

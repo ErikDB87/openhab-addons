@@ -142,10 +142,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
                 updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
                 updateControlTiming(CHANNEL_BUZZER_TIMEOUT, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL);
-                scheduleOrCancelBuzzerAutoOff(event);
+                scheduleOrCancelAutoOff(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
+                scheduleOrCancelAutoOff(CHANNEL_LED, event, COMMAND_LED_CONTROL);
                 applyControlState(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
                 updateControlTiming(CHANNEL_LIVE_TRACKING_TIMEOUT, CHANNEL_LIVE_TRACKING_REMAINING, event,
                         COMMAND_LIVE_TRACKING);
+                scheduleOrCancelAutoOff(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
                 updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE);
                 updateStringChannel(CHANNEL_CHARGING_STATE, event, FIELD_CHARGING_STATE);
                 updateStringChannel(CHANNEL_BATTERY_STATE, event, FIELD_BATTERY_STATE);
@@ -284,16 +286,17 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * #pollHealthOverview} can skip their entire REST call and what follows on the recurring poll without a registry
      * lookup on every tick. {@link #channelLinked} always fires for every pre-existing link when the handler
      * initializes, as well as for every later new link, so the cache always starts correct and stays correct without a
-     * separate startup sweep.
+     * separate startup sweep. The flag is set <b>before</b> calling {@code super.channelLinked()}, not after. Setting
+     * the flag afterward would leave a race where that very poll could still read the pre-link value.
      */
     @Override
     public void channelLinked(ChannelUID channelUID) {
-        super.channelLinked(channelUID);
         if (containsChannel(POSITION_GROUP_CHANNEL_IDS, channelUID)) {
             positionGroupLinked = true;
         } else if (containsChannel(getHealthOverviewChannelIds(), channelUID)) {
             healthOverviewLinked = true;
         }
+        super.channelLinked(channelUID);
     }
 
     /**
@@ -521,6 +524,17 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
+     * Outcome of {@link #tryConsumeSharedBudget}: whether the caller should proceed with the HTTP call at all, and,
+     * if so, which bucket (if any) to forward downstream to {@link #getJson}. {@code bucketForCall} is only the
+     * real bucket when this call's own token was actually available -- when it proceeds anyway because
+     * {@link #recurringPollEnabled} is {@code false}, it's {@code null}, so a subsequent HTTP 429 reaching
+     * {@link TractiveRetryUtil} never logs its "believed available" WARN for a call already known to be a
+     * bucket-bypassing exception, mirroring {@link #sendCommand}/{@code fetchPositions()}.
+     */
+    private record SharedBudgetResult(boolean proceed, @Nullable SharedRateLimitBucket bucketForCall) {
+    }
+
+    /**
      * Consumes one token from the bridge's shared {@code graph.tractive.com} rate-limit bucket (see
      * {@link SharedRateLimitBucket}). If none is available and {@link #recurringPollEnabled} is {@code true},
      * releases {@code guard} (so a later attempt isn't blocked by an in-progress/cooldown state for a call that
@@ -531,13 +545,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * HTTP call regardless -- the same "consume but never gate" treatment {@link #sendCommand} and
      * {@code fetchPositions()} already use for their own one-shot, deliberately-triggered calls.
      *
-     * @return {@code true} if the caller should proceed with the actual HTTP call
+     * @return whether to proceed, and which bucket to forward if so -- see {@link SharedBudgetResult}
      */
-    private boolean tryConsumeSharedBudget(TractiveAccountHandler bridge, PollGuard<JsonObject> guard,
+    private SharedBudgetResult tryConsumeSharedBudget(TractiveAccountHandler bridge, PollGuard<JsonObject> guard,
             Consumer<JsonObject> applyCached, String logContext) {
-        boolean tokenWasAvailable = bridge.getGraphApiRateLimitBucket().tryConsume();
+        SharedRateLimitBucket bucket = bridge.getGraphApiRateLimitBucket();
+        boolean tokenWasAvailable = bucket.tryConsume();
         if (tokenWasAvailable || !recurringPollEnabled) {
-            return true;
+            return new SharedBudgetResult(true, tokenWasAvailable ? bucket : null);
         }
         guard.release();
         JsonObject cached = guard.getCached();
@@ -547,7 +562,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         } else {
             logger.debug("{} skipped (shared rate-limit bucket empty), no cached response to re-apply", logContext);
         }
-        return false;
+        return new SharedBudgetResult(false, null);
     }
 
     /**
@@ -573,12 +588,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.trace("Skipping tracker details poll: already in progress");
             return;
         }
-        if (!tryConsumeSharedBudget(bridge, trackerDetailsGuard, this::applyTrackerDetails, "Tracker details poll")) {
+        SharedBudgetResult budget = tryConsumeSharedBudget(bridge, trackerDetailsGuard, this::applyTrackerDetails,
+                "Tracker details poll");
+        if (!budget.proceed()) {
             return;
         }
         try {
-            JsonObject json = getJson(bridge, API_BASE_URL + "tracker/" + trackerId,
-                    bridge.getGraphApiRateLimitBucket());
+            JsonObject json = getJson(bridge, API_BASE_URL + "tracker/" + trackerId, budget.bucketForCall());
             if (json == null) {
                 return;
             }
@@ -655,12 +671,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.trace("Skipping hw report poll: already in progress");
             return;
         }
-        if (!tryConsumeSharedBudget(bridge, hwReportGuard, this::applyHwReport, "Hw report poll")) {
+        SharedBudgetResult budget = tryConsumeSharedBudget(bridge, hwReportGuard, this::applyHwReport,
+                "Hw report poll");
+        if (!budget.proceed()) {
             return;
         }
         try {
             JsonObject json = getJson(bridge, API_BASE_URL + "device_hw_report/" + trackerId + "/",
-                    bridge.getGraphApiRateLimitBucket());
+                    budget.bucketForCall());
             if (json != null) {
                 hwReportGuard.setCached(json);
                 applyHwReport(json);
@@ -693,12 +711,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.trace("Skipping position report poll: already in progress");
             return;
         }
-        if (!tryConsumeSharedBudget(bridge, positionReportGuard, this::applyPositionReport, "Position report poll")) {
+        SharedBudgetResult budget = tryConsumeSharedBudget(bridge, positionReportGuard, this::applyPositionReport,
+                "Position report poll");
+        if (!budget.proceed()) {
             return;
         }
         try {
-            JsonObject json = getJson(bridge, API_BASE_URL + "device_pos_report/" + trackerId,
-                    bridge.getGraphApiRateLimitBucket());
+            JsonObject json = getJson(bridge, API_BASE_URL + "device_pos_report/" + trackerId, budget.bucketForCall());
             if (json != null) {
                 positionReportGuard.setCached(json);
                 applyPositionReport(json);
@@ -948,9 +967,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Reacts to an explicit command-timeout push from Tractive's cloud by forcing the relevant
-     * command switch back to OFF — confirmed only for the "an ON attempt timed out"; the OFF direction doesn't report
-     * such a time-out.
+     * Reacts to an explicit command-timeout push from Tractive's cloud by forcing the relevant command switch back to
+     * OFF -- confirmed only for "an ON attempt timed out"; a failed OFF doesn't appear to produce this message at all,
+     * queuing instead (see {@link #scheduleOrCancelAutoOff}). {@code start_failed} never carries a control object
+     * of its own, so {@link #applyControlState} can never react to it directly -- in every case observed so far the
+     * Item was already correctly OFF from an earlier {@code pending} echo, making this explicit correction redundant in
+     * practice, but it remains a safety net.
      */
     protected void applyStartFailed(JsonObject event) {
         if (!event.has(FIELD_COMMAND_TYPE)) {
@@ -965,9 +987,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (channelId == null) {
             return;
         }
-        if (CHANNEL_BUZZER.equals(channelId)) {
-            cancelBuzzerAutoOffTask();
-        }
+        cancelAutoOffTask(channelId);
         String reason = event.has(FIELD_CANCELLATION_REASON) ? event.get(FIELD_CANCELLATION_REASON).getAsString()
                 : "unknown";
         logger.info("Command on {} failed to take effect: {}", channelId, reason);
@@ -980,9 +1000,30 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * Applies a {@code trackable_object/{petId}} payload to the Profile channel group. Unlike every other
      * {@code applyXxx} method in this class, the data behind this one is never fetched on the recurring timed poll
      * schedule -- see README "Group profile" for the full list of what does trigger a fetch.
+     *
+     * {@code details.read_only} is deliberately not surfaced as its own channel: it always agrees with the
+     * top-level {@link #FIELD_READ_ONLY}, which {@link #CHANNEL_PROFILE_READ_ONLY} already covers.
+     *
+     * {@code lim}/{@code ribcage}'s unit is assumed to match {@code details.height}'s convention (metres); this is
+     * unconfirmed, since both have been {@code null} in every capture taken so far.
      */
     protected void applyProfile(JsonObject json) {
         logger.trace("Applying profile: {}", json);
+        if (isLinked(CHANNEL_LEADERBOARD_OPT_OUT) && json.has(FIELD_LEADERBOARD_OPT_OUT)
+                && !json.get(FIELD_LEADERBOARD_OPT_OUT).isJsonNull()) {
+            updateState(CHANNEL_LEADERBOARD_OPT_OUT,
+                    OnOffType.from(json.get(FIELD_LEADERBOARD_OPT_OUT).getAsBoolean()));
+        }
+        if (isLinked(CHANNEL_PROFILE_READ_ONLY) && json.has(FIELD_READ_ONLY)
+                && !json.get(FIELD_READ_ONLY).isJsonNull()) {
+            updateState(CHANNEL_PROFILE_READ_ONLY, OnOffType.from(json.get(FIELD_READ_ONLY).getAsBoolean()));
+        }
+        updateEpochChannel(CHANNEL_PROFILE_CREATED_AT, json, FIELD_CREATED_AT);
+        if (isLinked(CHANNEL_WALK_SHARING_CONSENT) && json.has(FIELD_IS_WALK_SHARING_CONSENT_PROVIDED)
+                && !json.get(FIELD_IS_WALK_SHARING_CONSENT_PROVIDED).isJsonNull()) {
+            updateState(CHANNEL_WALK_SHARING_CONSENT,
+                    OnOffType.from(json.get(FIELD_IS_WALK_SHARING_CONSENT_PROVIDED).getAsBoolean()));
+        }
         if (json.has(FIELD_DETAILS) && json.get(FIELD_DETAILS).isJsonObject()) {
             JsonObject details = json.get(FIELD_DETAILS).getAsJsonObject();
             updateStringChannel(CHANNEL_GENDER, details, FIELD_GENDER);
@@ -997,17 +1038,29 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                     && !details.get(FIELD_NEUTERED).isJsonNull()) {
                 updateState(CHANNEL_NEUTERED, OnOffType.from(details.get(FIELD_NEUTERED).getAsBoolean()));
             }
-            if (isLinked(CHANNEL_BREED_IDS) && details.has(FIELD_BREED_IDS)
-                    && details.get(FIELD_BREED_IDS).isJsonArray()) {
-                StringBuilder sb = new StringBuilder();
-                for (JsonElement el : details.get(FIELD_BREED_IDS).getAsJsonArray()) {
-                    if (sb.length() > 0) {
-                        sb.append(",");
-                    }
-                    sb.append(el.getAsString());
-                }
-                updateState(CHANNEL_BREED_IDS, new StringType(sb.toString()));
+            updateJoinedArrayChannel(CHANNEL_BREED_IDS, details, FIELD_BREED_IDS);
+            updateStringChannel(CHANNEL_PET_TYPE, details, FIELD_PET_TYPE);
+            updateStringChannel(CHANNEL_CHIP_ID, details, FIELD_CHIP_ID);
+            if (isLinked(CHANNEL_LIM) && details.has(FIELD_LIM) && !details.get(FIELD_LIM).isJsonNull()) {
+                updateState(CHANNEL_LIM, new QuantityType<>(details.get(FIELD_LIM).getAsDouble(), SIUnits.METRE));
             }
+            if (isLinked(CHANNEL_RIBCAGE) && details.has(FIELD_RIBCAGE) && !details.get(FIELD_RIBCAGE).isJsonNull()) {
+                updateState(CHANNEL_RIBCAGE,
+                        new QuantityType<>(details.get(FIELD_RIBCAGE).getAsDouble(), SIUnits.METRE));
+            }
+            updateStringChannel(CHANNEL_INSTAGRAM_USERNAME, details, FIELD_INSTAGRAM_USERNAME);
+            if (isLinked(CHANNEL_WEIGHT_IS_DEFAULT) && details.has(FIELD_WEIGHT_IS_DEFAULT)
+                    && !details.get(FIELD_WEIGHT_IS_DEFAULT).isJsonNull()) {
+                updateState(CHANNEL_WEIGHT_IS_DEFAULT,
+                        OnOffType.from(details.get(FIELD_WEIGHT_IS_DEFAULT).getAsBoolean()));
+            }
+            if (isLinked(CHANNEL_HEIGHT_IS_DEFAULT) && details.has(FIELD_HEIGHT_IS_DEFAULT)
+                    && !details.get(FIELD_HEIGHT_IS_DEFAULT).isJsonNull()) {
+                updateState(CHANNEL_HEIGHT_IS_DEFAULT,
+                        OnOffType.from(details.get(FIELD_HEIGHT_IS_DEFAULT).getAsBoolean()));
+            }
+            updateStringChannel(CHANNEL_PROFILE_PICTURE_ID, details, FIELD_PROFILE_PICTURE_ID);
+            updateJoinedArrayChannel(CHANNEL_GALLERY_PICTURE_IDS, details, FIELD_GALLERY_PICTURE_IDS);
         }
         if (isLinked(CHANNEL_HOME_LOCATION) && json.has(FIELD_HOME_LOCATION)
                 && json.get(FIELD_HOME_LOCATION).isJsonArray()) {
@@ -1017,6 +1070,24 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                         new DecimalType(hl.get(1).getAsDouble())));
             }
         }
+    }
+
+    /**
+     * Updates a String channel from a JSON array field by joining its elements with commas -- shared by
+     * {@link #CHANNEL_BREED_IDS} and {@link #CHANNEL_GALLERY_PICTURE_IDS}, the two array-valued Profile fields.
+     */
+    private void updateJoinedArrayChannel(String channelId, JsonObject json, String field) {
+        if (!isLinked(channelId) || !json.has(field) || !json.get(field).isJsonArray()) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement el : json.get(field).getAsJsonArray()) {
+            if (sb.length() > 0) {
+                sb.append(",");
+            }
+            sb.append(el.getAsString());
+        }
+        updateState(channelId, new StringType(sb.toString()));
     }
 
     /**
@@ -1040,12 +1111,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.trace("Skipping profile poll: already in progress");
             return;
         }
-        if (!tryConsumeSharedBudget(bridge, profileGuard, this::applyProfile, "Profile poll")) {
+        SharedBudgetResult budget = tryConsumeSharedBudget(bridge, profileGuard, this::applyProfile, "Profile poll");
+        if (!budget.proceed()) {
             return;
         }
         try {
             JsonObject json = getJson(bridge, API_BASE_URL + "trackable_object/" + trackedPetId,
-                    bridge.getGraphApiRateLimitBucket());
+                    budget.bucketForCall());
             if (json != null) {
                 profileGuard.setCached(json);
                 applyProfile(json);
@@ -1088,16 +1160,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     /**
      * Schedules (or cancels/reschedules) a locally-predicted "OFF" state for a command switch
      * channel, timed off the tracker's own {@code remaining} countdown from a confirmed
-     * {@code tracker_status} push. Shared mechanics for any channel whose control object carries a device-driven
-     * auto-off timer -- confirmed so far only for the buzzer minute hardware timeout, consistent across every capture);
-     * LED's {@code timeout} field has shown both {@code 300} and {@code 3600} with no settled explanation yet, so it is
-     * deliberately not wired up here until that's resolved. Each validated channel gets its own thin wrapper below
-     * rather than being called directly with an arbitrary channel/field pair, so adding a channel here is always a
-     * deliberate, visible decision, not an incidental one. While the tracker is awake, the real {@code tracker_status}
-     * confirmation arrives promptly on its own, so the prediction only actually pushes state if the tracker is still
-     * believed dormant at the moment the countdown elapses, since the tracker can go dormant partway through an
-     * already-running countdown. Every fresh confirmation cancels and (if still active) reschedules the prediction, so
-     * a renewal extends it exactly like it extends the real device timer.
+     * {@code tracker_status} push. Called directly for all three command channels (buzzer/LED/live-tracking) from
+     * {@link #onChannelEvent}. While the tracker is awake, the real {@code tracker_status} confirmation arrives
+     * promptly on its own, so the prediction only actually pushes state if the tracker is still believed dormant
+     * at the moment the countdown elapses, since the tracker can go dormant partway through an already-running
+     * countdown. Every fresh confirmation cancels and (if still active) reschedules the prediction, so a renewal
+     * extends it exactly like it extends the real device timer.
      */
     private void scheduleOrCancelAutoOff(String channelId, JsonObject event, String field) {
         if (!isLinked(channelId) || !event.has(field) || !event.get(field).isJsonObject()) {
@@ -1134,21 +1202,6 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (previous != null) {
             previous.cancel(false);
         }
-    }
-
-    /**
-     * Buzzer-specific entry point into {@link #scheduleOrCancelAutoOff} -- see that method for the
-     * shared mechanics and why only the buzzer is wired up so far.
-     */
-    protected void scheduleOrCancelBuzzerAutoOff(JsonObject event) {
-        scheduleOrCancelAutoOff(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
-    }
-
-    /**
-     * Buzzer-specific entry point into {@link #cancelAutoOffTask}.
-     */
-    private void cancelBuzzerAutoOffTask() {
-        cancelAutoOffTask(CHANNEL_BUZZER);
     }
 
     /**

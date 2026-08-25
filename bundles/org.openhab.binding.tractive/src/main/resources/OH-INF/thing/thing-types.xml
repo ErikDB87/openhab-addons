@@ -168,6 +168,19 @@
 			<channel id="neutered" typeId="neutered"/>
 			<channel id="home-location" typeId="home-location"/>
 			<channel id="last-updated" typeId="profile-last-updated"/>
+			<channel id="leaderboard-opt-out" typeId="leaderboard-opt-out"/>
+			<channel id="read-only" typeId="profile-read-only"/>
+			<channel id="created-at" typeId="profile-created-at"/>
+			<channel id="pet-type" typeId="pet-type"/>
+			<channel id="chip-id" typeId="chip-id"/>
+			<channel id="lim" typeId="lim"/>
+			<channel id="ribcage" typeId="ribcage"/>
+			<channel id="instagram-username" typeId="instagram-username"/>
+			<channel id="weight-is-default" typeId="weight-is-default"/>
+			<channel id="height-is-default" typeId="height-is-default"/>
+			<channel id="profile-picture-id" typeId="profile-picture-id"/>
+			<channel id="gallery-picture-ids" typeId="gallery-picture-ids"/>
+			<channel id="walk-sharing-consent" typeId="walk-sharing-consent"/>
 		</channels>
 	</channel-group-type>
 
@@ -532,6 +545,130 @@
 		<tags>
 			<tag>Timestamp</tag>
 		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="leaderboard-opt-out" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Leaderboard Opt-Out</label>
+		<description>Whether the owner opted this pet out of Tractive's activity-leaderboard/community feature. Only
+			refreshed
+			at Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-read-only" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Read Only</label>
+		<description>Whether the authenticated account only has shared/invited-level access to this pet, as opposed to
+			owner-level access. Only refreshed at Thing setup or via the "Refresh profile" action.</description>
+		<tags>
+			<tag>Status</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-created-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Profile Created At</label>
+		<description>Time this pet profile was first created in Tractive. Only refreshed at Thing setup or via the
+			"Refresh
+			profile" action.</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="pet-type" advanced="true">
+		<item-type>String</item-type>
+		<label>Pet Type</label>
+		<description>The pet's species (e.g. DOG). Only refreshed at Thing setup or via the "Refresh profile"
+			action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="chip-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Microchip ID</label>
+		<description>The pet's microchip ID, if entered in the app. Only refreshed at Thing setup or via the "Refresh
+			profile"
+			action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="lim" advanced="true">
+		<item-type>Number:Length</item-type>
+		<label>Leg Index Measurement (LIM)</label>
+		<description>Distance from the patella to the calcaneal tuber on the left hind limb, one of two inputs to the
+			Feline
+			Body Mass Index (FBMI). Only populated for cat profiles -- always null for a DOG. Only refreshed at
+			Thing setup or via
+			the "Refresh profile" action.</description>
+		<state readOnly="true" pattern="%.2f %unit%"/>
+	</channel-type>
+
+	<channel-type id="ribcage" advanced="true">
+		<item-type>Number:Length</item-type>
+		<label>Ribcage Circumference</label>
+		<description>Ribcage circumference at the 9th cranial rib, the other FBMI input alongside LIM. Only populated
+			for cat
+			profiles -- always null for a DOG. Only refreshed at Thing setup or via the "Refresh profile"
+			action.</description>
+		<state readOnly="true" pattern="%.2f %unit%"/>
+	</channel-type>
+
+	<channel-type id="instagram-username" advanced="true">
+		<item-type>String</item-type>
+		<label>Instagram Username</label>
+		<description>The pet's linked Instagram handle, if set. Only refreshed at Thing setup or via the "Refresh
+			profile"
+			action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="weight-is-default" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Weight Is Default</label>
+		<description>Whether the Weight channel is a real user-entered value or a breed-average default. Only refreshed
+			at
+			Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="height-is-default" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Height Is Default</label>
+		<description>Whether the Height channel is a real user-entered value or a breed-average default. Only refreshed
+			at
+			Thing setup or via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="profile-picture-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Profile Picture ID</label>
+		<description>ID referencing the pet's profile photo asset in Tractive's media storage. Only refreshed at Thing
+			setup or
+			via the "Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="gallery-picture-ids" advanced="true">
+		<item-type>String</item-type>
+		<label>Gallery Picture IDs</label>
+		<description>Comma-separated IDs referencing the pet's gallery photo assets. Only refreshed at Thing setup or
+			via the
+			"Refresh profile" action.</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="walk-sharing-consent" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Walk Sharing Consent</label>
+		<description>Whether the owner consented to sharing this pet's walk data, a Tractive community/walk-sharing
+			feature.
+			Only refreshed at Thing setup or via the "Refresh profile" action.</description>
 		<state readOnly="true"/>
 	</channel-type>
 

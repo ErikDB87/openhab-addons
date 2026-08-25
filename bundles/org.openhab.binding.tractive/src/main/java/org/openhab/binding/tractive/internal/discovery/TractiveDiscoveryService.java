@@ -102,14 +102,17 @@ public class TractiveDiscoveryService extends AbstractDiscoveryService implement
 
     /**
      * Sends an authenticated GET request and returns the response, or {@code null} if the request
-     * could not be completed (interrupted, or failed after retries).
+     * could not be completed (interrupted, or failed after retries). Consumes one token from the shared
+     * {@code graph.tractive.com} bucket for accounting only, never gating on it -- discovery is one-shot with no
+     * cache to fall back on, same as {@code sendCommand()}/{@code fetchPositions()}.
      */
     private @Nullable ContentResponse fetchGet(TractiveAccountHandler bridge, HttpClient httpClient, String url,
             String logContext) {
+        boolean tokenWasAvailable = bridge.getGraphApiRateLimitBucket().tryConsume();
         try {
             return TractiveRetryUtil
                     .sendWithRetry(() -> bridge.addAuthHeaders(httpClient.newRequest(url).method(HttpMethod.GET)),
-                            scheduler, logger, bridge.getGraphApiRateLimitBucket())
+                            scheduler, logger, tokenWasAvailable ? bridge.getGraphApiRateLimitBucket() : null)
                     .get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
