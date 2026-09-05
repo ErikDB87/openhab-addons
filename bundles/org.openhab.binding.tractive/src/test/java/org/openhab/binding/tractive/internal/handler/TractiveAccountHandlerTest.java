@@ -56,9 +56,12 @@ import org.openhab.core.thing.binding.ThingHandlerCallback;
  * need the scheduler), and the public {@link TractiveAccountHandler#refreshToken}. Covers the three
  * {@code authenticate()} failure branches (a real {@code InterruptedException}, a Jetty {@code TimeoutException},
  * and {@code ExecutionException} -- see CLAUDE.md's "Checked-exception hierarchy" entry for why the first is
- * deliberately silent at every call site while the latter two report {@code OFFLINE}/{@code COMMUNICATION_ERROR}),
- * a non-200 and a structurally-incomplete 200 response, the bridge auth retry backoff doubling, and the
- * thread-safe re-auth guard ({@code knownToken} mismatch is a silent no-op).
+ * deliberately silent at every call site), a non-200 and a structurally-incomplete 200 response, the bridge auth
+ * retry backoff doubling, and the thread-safe re-auth guard ({@code knownToken} mismatch is a silent no-op). Also
+ * covers {@code handleTokenRefreshFailure()}'s tolerance logic: a transient {@code IOException} from
+ * {@code checkAndRefreshToken()} / {@code refreshToken()} is retried silently and only escalates to
+ * {@code OFFLINE}/{@code COMMUNICATION_ERROR} after {@code TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE} consecutive
+ * failures, immediately when the token is within the expiry buffer, or immediately for a {@code RuntimeException}.
  *
  * @author Erik De Boeck - Initial contribution
  */
@@ -93,9 +96,6 @@ class TractiveAccountHandlerTest {
         lenient().when(request.content(any())).thenReturn(request);
         lenient().when(request.send()).thenReturn(response);
         lenient().when(mockScheduler.schedule(any(Runnable.class), anyLong(), any(TimeUnit.class)))
-                .thenAnswer(inv -> mock(ScheduledFuture.class));
-        lenient().when(
-                mockScheduler.scheduleWithFixedDelay(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                 .thenAnswer(inv -> mock(ScheduledFuture.class));
 
         handler = new TractiveAccountHandler(bridgeThing, httpClient);
@@ -238,7 +238,9 @@ class TractiveAccountHandlerTest {
         verify(callback).statusUpdated(eq(bridgeThing), argThat(info -> info.getStatus() == ThingStatus.ONLINE));
         // The initial schedule(..., 0, SECONDS) plus startChannelLoop()'s own schedule(..., 0, SECONDS).
         verify(mockScheduler, times(2)).schedule(any(Runnable.class), eq(0L), eq(TimeUnit.SECONDS));
-        verify(mockScheduler).scheduleWithFixedDelay(any(Runnable.class), eq(10L), eq(10L), eq(TimeUnit.MINUTES));
+        // checkAndRefreshToken() self-reschedules (like the channel loop) instead of using scheduleWithFixedDelay;
+        // 600 = TOKEN_REFRESH_INTERVAL_MINUTES * 60.
+        verify(mockScheduler).schedule(any(Runnable.class), eq(600L), eq(TimeUnit.SECONDS));
     }
 
     @Test
@@ -278,14 +280,64 @@ class TractiveAccountHandlerTest {
     }
 
     @Test
-    void checkAndRefreshTokenTimeoutSetsOfflineCommunicationError() throws Exception {
+    void checkAndRefreshTokenTransientFailureIsRetriedSilentlyUntilThreshold() throws Exception {
         setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 31_536_000L); // token nowhere near expiry
+        when(request.send()).thenThrow(new TimeoutException("simulated timeout"));
+
+        invokeCheckAndRefreshToken(); // failure 1
+        invokeCheckAndRefreshToken(); // failure 2
+        verify(callback, never()).statusUpdated(any(), any());
+
+        invokeCheckAndRefreshToken(); // failure 3 -> escalates
+        verify(callback, times(1)).statusUpdated(eq(bridgeThing),
+                argThat(info -> isOffline(info, ThingStatusDetail.COMMUNICATION_ERROR)));
+    }
+
+    @Test
+    void checkAndRefreshTokenFailureNearExpiryGoesOfflineImmediately() throws Exception {
+        setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 60L); // inside
+                                                                               // TOKEN_EXPIRY_ESCALATION_BUFFER_S
         when(request.send()).thenThrow(new TimeoutException("simulated timeout"));
 
         invokeCheckAndRefreshToken();
 
         verify(callback).statusUpdated(eq(bridgeThing),
                 argThat(info -> isOffline(info, ThingStatusDetail.COMMUNICATION_ERROR)));
+    }
+
+    @Test
+    void checkAndRefreshTokenRuntimeExceptionGoesOfflineImmediately() throws Exception {
+        setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 31_536_000L); // expiry buffer is irrelevant
+                                                                                       // here
+        when(request.send()).thenThrow(new IllegalStateException("unexpected bug"));
+
+        invokeCheckAndRefreshToken();
+
+        verify(callback).statusUpdated(eq(bridgeThing),
+                argThat(info -> isOffline(info, ThingStatusDetail.COMMUNICATION_ERROR)));
+    }
+
+    @Test
+    void checkAndRefreshTokenSuccessResetsTheFailureCount() throws Exception {
+        setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 31_536_000L);
+        stubSuccessfulAuthResponse();
+        when(request.send()).thenThrow(new TimeoutException("t")).thenThrow(new TimeoutException("t"))
+                .thenReturn(response).thenThrow(new TimeoutException("t")).thenThrow(new TimeoutException("t"));
+
+        invokeCheckAndRefreshToken(); // fail 1
+        invokeCheckAndRefreshToken(); // fail 2
+        invokeCheckAndRefreshToken(); // success -> ONLINE, counter reset to 0
+        invokeCheckAndRefreshToken(); // fail 1 (post-reset)
+        invokeCheckAndRefreshToken(); // fail 2 (post-reset)
+
+        // Without the reset, the 5th call would be the 3rd consecutive failure and would go OFFLINE.
+        verify(callback, never()).statusUpdated(eq(bridgeThing),
+                argThat(info -> isOffline(info, ThingStatusDetail.COMMUNICATION_ERROR)));
+        verify(callback).statusUpdated(eq(bridgeThing), argThat(info -> info.getStatus() == ThingStatus.ONLINE));
     }
 
     // -- refreshToken() (public) ------------------------------------------------------------------
@@ -323,8 +375,37 @@ class TractiveAccountHandlerTest {
     }
 
     @Test
-    void refreshTokenTimeoutSetsOfflineCommunicationError() throws Exception {
+    void refreshTokenTransientFailureIsRetriedSilentlyUntilThreshold() throws Exception {
         setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 31_536_000L);
+        when(request.send()).thenThrow(new TimeoutException("simulated timeout"));
+
+        handler.refreshToken(null); // failure 1
+        handler.refreshToken(null); // failure 2
+        verify(callback, never()).statusUpdated(any(), any());
+
+        handler.refreshToken(null); // failure 3 -> escalates
+        verify(callback, times(1)).statusUpdated(eq(bridgeThing),
+                argThat(info -> isOffline(info, ThingStatusDetail.COMMUNICATION_ERROR)));
+    }
+
+    @Test
+    void refreshTokenFailureSchedulesItsOwnRetry() throws Exception {
+        setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 31_536_000L);
+        when(request.send()).thenThrow(new TimeoutException("simulated timeout"));
+
+        handler.refreshToken(null);
+
+        // refreshToken() no longer just sets status and returns -- it queues a retry on the shared token task at the
+        // initial backoff delay (15 s) instead of leaning on the next proactive tick or 401 to notice.
+        verify(mockScheduler).schedule(any(Runnable.class), eq(15L), eq(TimeUnit.SECONDS));
+    }
+
+    @Test
+    void refreshTokenFailureNearExpiryGoesOfflineImmediately() throws Exception {
+        setPrivateField("config", validConfig());
+        setPrivateField("expiresAt", System.currentTimeMillis() / 1000 + 60L);
         when(request.send()).thenThrow(new TimeoutException("simulated timeout"));
 
         handler.refreshToken(null);

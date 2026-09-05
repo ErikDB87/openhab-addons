@@ -81,6 +81,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     protected String trackedPetId = "";
 
     private static final long DEFAULT_MIN_POLL_INTERVAL_MS = 10_000;
+    private static final long LAST_CONTACT_MIN_UPDATE_INTERVAL_MS = 5_000;
 
     private final PollGuard<JsonObject> trackerDetailsGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
     private final PollGuard<JsonObject> hwReportGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
@@ -115,6 +116,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     private volatile @Nullable Instant lastAppliedHealthSyncedAt;
     private volatile boolean positionGroupLinked;
     private volatile boolean healthOverviewLinked;
+    private volatile long lastContactUpdateMs;
 
     private static final String[] POSITION_GROUP_CHANNEL_IDS = { CHANNEL_LOCATION, CHANNEL_LAST_POSITION_TIME,
             CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY };
@@ -142,12 +144,13 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
                 updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
                 updateControlTiming(CHANNEL_BUZZER_TIMEOUT, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL);
-                scheduleOrCancelAutoOff(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
-                scheduleOrCancelAutoOff(CHANNEL_LED, event, COMMAND_LED_CONTROL);
+                scheduleOrCancelAutoOff(CHANNEL_BUZZER, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL);
+                scheduleOrCancelAutoOff(CHANNEL_LED, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
                 applyControlState(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
                 updateControlTiming(CHANNEL_LIVE_TRACKING_TIMEOUT, CHANNEL_LIVE_TRACKING_REMAINING, event,
                         COMMAND_LIVE_TRACKING);
-                scheduleOrCancelAutoOff(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
+                scheduleOrCancelAutoOff(CHANNEL_LIVE_TRACKING, CHANNEL_LIVE_TRACKING_REMAINING, event,
+                        COMMAND_LIVE_TRACKING);
                 updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE);
                 updateStringChannel(CHANNEL_CHARGING_STATE, event, FIELD_CHARGING_STATE);
                 updateStringChannel(CHANNEL_BATTERY_STATE, event, FIELD_BATTERY_STATE);
@@ -182,9 +185,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 logger.debug("Ignoring unrecognized channel event message={}", messageType);
                 break;
         }
-        if (isLinked(CHANNEL_LAST_CONTACT)) {
-            updateState(CHANNEL_LAST_CONTACT, new DateTimeType());
-        }
+        bumpLastContact();
         updateStatus(ThingStatus.ONLINE);
     }
 
@@ -426,9 +427,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.warn("Command {}/{} returned HTTP {}", commandName, state, response.getStatus());
         } else {
             logger.trace("Command {}/{} → {}", commandName, state, response.getContentAsString());
-            if (isLinked(CHANNEL_LAST_CONTACT)) {
-                updateState(CHANNEL_LAST_CONTACT, new DateTimeType());
-            }
+            bumpLastContact();
         }
     }
 
@@ -492,9 +491,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             logger.warn("fetchPositions({}, {}) returned HTTP {}", from, to, response.getStatus());
             return null;
         }
-        if (isLinked(CHANNEL_LAST_CONTACT)) {
-            updateState(CHANNEL_LAST_CONTACT, new DateTimeType());
-        }
+        bumpLastContact();
         return response.getContentAsString();
     }
 
@@ -1073,10 +1070,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Updates a String channel from a JSON array field by joining its elements with commas -- shared by
-     * {@link #CHANNEL_BREED_IDS} and {@link #CHANNEL_GALLERY_PICTURE_IDS}, the two array-valued Profile fields.
+     * Updates a String channel from a JSON array field by joining its elements with commas.
      */
-    private void updateJoinedArrayChannel(String channelId, JsonObject json, String field) {
+    protected void updateJoinedArrayChannel(String channelId, JsonObject json, String field) {
         if (!isLinked(channelId) || !json.has(field) || !json.get(field).isJsonArray()) {
             return;
         }
@@ -1165,13 +1161,17 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * promptly on its own, so the prediction only actually pushes state if the tracker is still believed dormant
      * at the moment the countdown elapses, since the tracker can go dormant partway through an already-running
      * countdown. Every fresh confirmation cancels and (if still active) reschedules the prediction, so a renewal
-     * extends it exactly like it extends the real device timer.
+     * extends it exactly like it extends the real device timer. Also zeroes the paired {@code -remaining}
+     * channel when it fires -- without this, that channel is left showing its last real value indefinitely, since
+     * {@link #updateControlTiming} only ever writes it from a genuine {@code tracker_status} push, none of which
+     * this prediction firing implies will ever arrive.
      */
-    private void scheduleOrCancelAutoOff(String channelId, JsonObject event, String field) {
-        if (!isLinked(channelId) || !event.has(field) || !event.get(field).isJsonObject()) {
+    private void scheduleOrCancelAutoOff(String onOffChannelId, String remainingTimeChannelId, JsonObject event,
+            String field) {
+        if (!isLinked(onOffChannelId) || !event.has(field) || !event.get(field).isJsonObject()) {
             return;
         }
-        cancelAutoOffTask(channelId);
+        cancelAutoOffTask(onOffChannelId);
 
         JsonObject control = event.get(field).getAsJsonObject();
         JsonElement active = control.get(FIELD_ACTIVE);
@@ -1184,11 +1184,20 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (delayMillis <= 0) {
             return;
         }
-        autoOffTasks.put(channelId, taskTracker.track(scheduler.schedule(() -> {
-            if (isLinked(channelId) && powerSaving) {
-                logger.info("Predicting {} auto-off after {}s with no confirmation (tracker believed dormant)",
-                        channelId, remaining.getAsDouble());
-                updateState(channelId, OnOffType.OFF);
+        autoOffTasks.put(onOffChannelId, taskTracker.track(scheduler.schedule(() -> {
+            if (powerSaving) {
+                boolean onOffChannelLinked = isLinked(onOffChannelId);
+                boolean remainingTimeChannelLinked = isLinked(remainingTimeChannelId);
+                if ((onOffChannelLinked || remainingTimeChannelLinked)) {
+                    logger.info("Predicting {} auto-off after {}s with no confirmation (tracker believed dormant)",
+                            onOffChannelId, remaining.getAsDouble());
+                    if (onOffChannelLinked) {
+                        updateState(onOffChannelId, OnOffType.OFF);
+                    }
+                    if (remainingTimeChannelLinked) {
+                        updateState(remainingTimeChannelId, new QuantityType<>(0, Units.SECOND));
+                    }
+                }
             }
         }, delayMillis, TimeUnit.MILLISECONDS)));
     }
@@ -1237,6 +1246,18 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             JsonElement el = json.get(field);
             if (el != null && !el.isJsonNull()) {
                 updateState(channelId, new QuantityType<>(el.getAsInt(), Units.MINUTE));
+            }
+        }
+    }
+
+    /**
+     * Updates a plain {@link DecimalType} Number channel from an integer JSON field.
+     */
+    protected void updateIntChannel(String channelId, JsonObject json, String field) {
+        if (isLinked(channelId)) {
+            JsonElement el = json.get(field);
+            if (el != null && !el.isJsonNull()) {
+                updateState(channelId, new DecimalType(el.getAsInt()));
             }
         }
     }
@@ -1310,6 +1331,23 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         }
     }
 
+    /**
+     * Updates {@link #CHANNEL_LAST_CONTACT} to now, unless less than {@link #LAST_CONTACT_MIN_UPDATE_INTERVAL_MS}
+     * has passed since the previous update -- see that constant for why. Called from every successful REST call and
+     * real-time channel event.
+     */
+    private void bumpLastContact() {
+        if (!isLinked(CHANNEL_LAST_CONTACT)) {
+            return;
+        }
+        long now = System.currentTimeMillis();
+        if (now - lastContactUpdateMs < LAST_CONTACT_MIN_UPDATE_INTERVAL_MS) {
+            return;
+        }
+        lastContactUpdateMs = now;
+        updateState(CHANNEL_LAST_CONTACT, new DateTimeType());
+    }
+
     private @Nullable ContentResponse executeGet(TractiveAccountHandler bridge, String url,
             @Nullable SharedRateLimitBucket sharedBucket) {
         ContentResponse response = sendGetWithReauth(bridge, bridge.getHttpClient(), url, "GET " + url, sharedBucket);
@@ -1322,9 +1360,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return null;
         }
         logger.trace("GET {} → {}", url, response.getContentAsString());
-        if (isLinked(CHANNEL_LAST_CONTACT)) {
-            updateState(CHANNEL_LAST_CONTACT, new DateTimeType());
-        }
+        bumpLastContact();
         return response;
     }
 }

@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
@@ -70,6 +71,8 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private static final long TOKEN_REFRESH_INTERVAL_MINUTES = 10;
     private static final long RECONNECT_INITIAL_DELAY_S = 15;
     private static final long RECONNECT_MAX_DELAY_S = 300;
+    private static final int TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE = 3;
+    private static final long TOKEN_EXPIRY_ESCALATION_BUFFER_S = TOKEN_REFRESH_INTERVAL_MINUTES * 60 * 2;
 
     private final Logger logger = LoggerFactory.getLogger(TractiveAccountHandler.class);
     private final HttpClient httpClient;
@@ -83,6 +86,9 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private long expiresAt;
     private long channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
     private long bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private long tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private int consecutiveTokenRefreshFailures;
+    private @Nullable ScheduledFuture<?> tokenRefreshFuture;
 
     private volatile @Nullable TractiveDiscoveryService discoveryService;
 
@@ -140,14 +146,14 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
             updateStatus(ThingStatus.ONLINE);
             bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
             channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+            tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
 
             TractiveDiscoveryService discovery = discoveryService;
             if (discovery != null) {
                 discovery.runAutomaticScanOnce();
             }
 
-            taskTracker.track(scheduler.scheduleWithFixedDelay(this::checkAndRefreshToken,
-                    TOKEN_REFRESH_INTERVAL_MINUTES, TOKEN_REFRESH_INTERVAL_MINUTES, TimeUnit.MINUTES));
+            scheduleCheckAndRefreshToken(TOKEN_REFRESH_INTERVAL_MINUTES * 60);
 
             startChannelLoop();
         } catch (InterruptedIOException e) {
@@ -161,10 +167,10 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         }
     }
 
-    private void authenticate(String email, String password, @Nullable String knownToken) throws IOException {
+    private boolean authenticate(String email, String password, @Nullable String knownToken) throws IOException {
         synchronized (authLock) {
             if (!Objects.equals(accessToken, knownToken)) {
-                return;
+                return false;
             }
             String bodyJson = gson.toJson(Map.of(FIELD_PLATFORM_EMAIL, email, FIELD_PLATFORM_TOKEN, password,
                     FIELD_GRANT_TYPE, VALUE_GRANT_TYPE_TRACTIVE));
@@ -200,7 +206,17 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
             userId = body.get(FIELD_USER_ID).getAsString();
             expiresAt = body.get(FIELD_EXPIRES_AT).getAsLong();
             logger.debug("Authenticated as user_id={}, token expires at epoch={}", userId, expiresAt);
+            return true;
         }
+    }
+
+    private synchronized void scheduleCheckAndRefreshToken(long delaySeconds) {
+        ScheduledFuture<?> pending = tokenRefreshFuture;
+        if (pending != null) {
+            pending.cancel(false);
+        }
+        tokenRefreshFuture = taskTracker
+                .track(scheduler.schedule(this::checkAndRefreshToken, delaySeconds, TimeUnit.SECONDS));
     }
 
     private void checkAndRefreshToken() {
@@ -211,12 +227,48 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         long nowEpochSeconds = System.currentTimeMillis() / 1000;
         logger.trace("Token expiry check: {}s remaining", expiresAt - nowEpochSeconds);
         try {
-            authenticate(currentConfig.email, currentConfig.password, accessToken);
+            if (authenticate(currentConfig.email, currentConfig.password, accessToken)) {
+                updateStatus(ThingStatus.ONLINE);
+            }
+            consecutiveTokenRefreshFailures = 0;
+            tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+            scheduleCheckAndRefreshToken(TOKEN_REFRESH_INTERVAL_MINUTES * 60);
         } catch (InterruptedIOException e) {
-            // Thread already re-interrupted inside authenticate(); exit without touching status.
+            // Thread already re-interrupted inside authenticate(); exit without touching status or rescheduling.
         } catch (IOException | RuntimeException e) {
+            handleTokenRefreshFailure(e);
+            long nextDelay = tokenRefreshRetryDelaySeconds;
+            tokenRefreshRetryDelaySeconds = Math.min(tokenRefreshRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+            scheduleCheckAndRefreshToken(nextDelay);
+        }
+    }
+
+    /**
+     * Reacts to a failed token (re-)authentication from {@link #checkAndRefreshToken()} or
+     * {@link #refreshToken(String)}. A {@link RuntimeException} is a bug that will not fix itself, so it takes the
+     * bridge {@code OFFLINE} at once. An {@link IOException} is almost always a transient transport failure while
+     * the current token is still usable, so the bridge is only taken {@code OFFLINE} once failures have persisted
+     * ({@link #TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE} in a row) or the current token is within
+     * {@link #TOKEN_EXPIRY_ESCALATION_BUFFER_S} of expiry. The caller schedules the retry either way.
+     */
+    private void handleTokenRefreshFailure(Exception e) {
+        if (e instanceof RuntimeException) {
             updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
                     "Token refresh failed: " + e.getMessage());
+            logger.warn("Token refresh failed unexpectedly, bridge offline: {}", e.getMessage());
+            return;
+        }
+        consecutiveTokenRefreshFailures++;
+        long secondsToExpiry = expiresAt - System.currentTimeMillis() / 1000;
+        if (consecutiveTokenRefreshFailures >= TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE
+                || secondsToExpiry < TOKEN_EXPIRY_ESCALATION_BUFFER_S) {
+            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    "Token refresh failed: " + e.getMessage());
+            logger.warn("Token refresh failed ({} consecutive, {}s to token expiry), bridge offline: {}",
+                    consecutiveTokenRefreshFailures, secondsToExpiry, e.getMessage());
+        } else {
+            logger.debug("Token refresh attempt {} failed, retrying (current token valid for {}s): {}",
+                    consecutiveTokenRefreshFailures, secondsToExpiry, e.getMessage());
         }
     }
 
@@ -347,12 +399,18 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
             return;
         }
         try {
-            authenticate(currentConfig.email, currentConfig.password, knownToken);
+            if (authenticate(currentConfig.email, currentConfig.password, knownToken)) {
+                updateStatus(ThingStatus.ONLINE);
+            }
+            consecutiveTokenRefreshFailures = 0;
+            tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
         } catch (InterruptedIOException e) {
             // Thread already re-interrupted inside authenticate(); exit without touching status.
         } catch (IOException | RuntimeException e) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                    "Token refresh failed: " + e.getMessage());
+            handleTokenRefreshFailure(e);
+            long nextDelay = tokenRefreshRetryDelaySeconds;
+            tokenRefreshRetryDelaySeconds = Math.min(tokenRefreshRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
+            scheduleCheckAndRefreshToken(nextDelay);
         }
     }
 

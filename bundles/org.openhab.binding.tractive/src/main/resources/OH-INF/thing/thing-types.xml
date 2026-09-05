@@ -147,6 +147,13 @@
 			<channel id="unseen-health-alerts" typeId="unseen-health-alerts"/>
 			<channel id="activity-synced-at" typeId="activity-synced-at"/>
 			<channel id="scratch" typeId="scratch-status"/>
+			<channel id="activity-hourly-distribution" typeId="activity-hourly-distribution"/>
+			<channel id="resting-heart-rate-day-offset" typeId="day-offset"/>
+			<channel id="resting-respiratory-rate-day-offset" typeId="day-offset"/>
+			<channel id="scratch-day-offset" typeId="day-offset"/>
+			<channel id="associated-report-types" typeId="associated-report-types"/>
+			<channel id="separation-phase-ongoing" typeId="separation-phase-ongoing"/>
+			<channel id="separation-phase-started-at" typeId="separation-phase-started-at"/>
 		</channels>
 	</channel-group-type>
 
@@ -154,6 +161,7 @@
 		<label>Dog</label>
 		<channels>
 			<channel id="bark" typeId="bark-status"/>
+			<channel id="bark-day-offset" typeId="day-offset"/>
 		</channels>
 	</channel-group-type>
 
@@ -382,6 +390,48 @@
 		<item-type>String</item-type>
 		<label>Scratch Status</label>
 		<description>Scratch detection status from health overview (e.g. INFREQUENT)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="activity-hourly-distribution" advanced="true">
+		<item-type>String</item-type>
+		<label>Activity Hourly Distribution</label>
+		<description>Tractive's 24-element per-hour activity breakdown of the current day: a comma-separated list of 24
+			integers</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="day-offset" advanced="true">
+		<item-type>Number</item-type>
+		<label>Day Offset</label>
+		<description>Which day the related health sub-record covers, relative to today (0 = today, -1 =
+			yesterday)</description>
+		<state readOnly="true" pattern="%d"/>
+	</channel-type>
+
+	<channel-type id="associated-report-types" advanced="true">
+		<item-type>String</item-type>
+		<label>Associated Report Types</label>
+		<description>Comma-separated types of the reports bundled with the health overview (e.g.
+			HEALTH_WEEKLY_REPORT)</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="separation-phase-ongoing" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Separation Phase Ongoing</label>
+		<description>Whether a separation-anxiety monitoring phase is currently ongoing for this pet</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="separation-phase-started-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Separation Phase Started At</label>
+		<description>When the current separation-anxiety monitoring phase started; undefined while none is
+			ongoing</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
 		<state readOnly="true"/>
 	</channel-type>
 

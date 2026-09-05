@@ -23,12 +23,14 @@ import org.eclipse.jetty.client.HttpClient;
 import org.openhab.binding.tractive.internal.action.TractiveDog6Actions;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.types.StringType;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.binding.ThingHandlerService;
 import org.openhab.core.types.Command;
 import org.openhab.core.types.RefreshType;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 /**
@@ -45,7 +47,9 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
     private static final String[] HEALTH_OVERVIEW_CHANNEL_IDS = { CHANNEL_ACTIVITY_RECORDED, CHANNEL_ACTIVITY_GOAL,
             CHANNEL_SLEEP_DAY, CHANNEL_SLEEP_NIGHT, CHANNEL_SLEEP_CALM, CHANNEL_RESTING_HEART_RATE_STATUS,
             CHANNEL_RESTING_RESPIRATORY_RATE_STATUS, CHANNEL_UNSEEN_HEALTH_ALERTS, CHANNEL_ACTIVITY_SYNCED_AT,
-            CHANNEL_SCRATCH, CHANNEL_BARK };
+            CHANNEL_SCRATCH, CHANNEL_BARK, CHANNEL_ACTIVITY_HOURLY_DISTRIBUTION, CHANNEL_RESTING_HEART_RATE_DAY_OFFSET,
+            CHANNEL_RESTING_RESPIRATORY_RATE_DAY_OFFSET, CHANNEL_SCRATCH_DAY_OFFSET, CHANNEL_ASSOCIATED_REPORT_TYPES,
+            CHANNEL_SEPARATION_PHASE_ONGOING, CHANNEL_SEPARATION_PHASE_STARTED_AT, CHANNEL_BARK_DAY_OFFSET };
 
     /**
      * Creates a new Dog 6 tracker handler for the given thing.
@@ -95,6 +99,7 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
             JsonObject activity = json.get(FIELD_ACTIVITY).getAsJsonObject();
             updateIntMinutesChannel(CHANNEL_ACTIVITY_RECORDED, activity, FIELD_MINUTES_ACTIVE);
             updateIntMinutesChannel(CHANNEL_ACTIVITY_GOAL, activity, FIELD_MINUTES_GOAL);
+            updateJoinedArrayChannel(CHANNEL_ACTIVITY_HOURLY_DISTRIBUTION, activity, FIELD_HOURLY_DISTRIBUTION);
         }
         if (json.has(FIELD_SLEEP) && json.get(FIELD_SLEEP).isJsonObject()) {
             JsonObject sleep = json.get(FIELD_SLEEP).getAsJsonObject();
@@ -103,18 +108,24 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
             updateIntMinutesChannel(CHANNEL_SLEEP_CALM, sleep, FIELD_MINUTES_CALM);
         }
         if (json.has(FIELD_RESTING_HEART_RATE) && json.get(FIELD_RESTING_HEART_RATE).isJsonObject()) {
-            updateStringChannel(CHANNEL_RESTING_HEART_RATE_STATUS, json.get(FIELD_RESTING_HEART_RATE).getAsJsonObject(),
-                    FIELD_STATUS);
+            JsonObject rhr = json.get(FIELD_RESTING_HEART_RATE).getAsJsonObject();
+            updateStringChannel(CHANNEL_RESTING_HEART_RATE_STATUS, rhr, FIELD_STATUS);
+            updateIntChannel(CHANNEL_RESTING_HEART_RATE_DAY_OFFSET, rhr, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_RESTING_RESPIRATORY_RATE) && json.get(FIELD_RESTING_RESPIRATORY_RATE).isJsonObject()) {
-            updateStringChannel(CHANNEL_RESTING_RESPIRATORY_RATE_STATUS,
-                    json.get(FIELD_RESTING_RESPIRATORY_RATE).getAsJsonObject(), FIELD_STATUS);
+            JsonObject rrr = json.get(FIELD_RESTING_RESPIRATORY_RATE).getAsJsonObject();
+            updateStringChannel(CHANNEL_RESTING_RESPIRATORY_RATE_STATUS, rrr, FIELD_STATUS);
+            updateIntChannel(CHANNEL_RESTING_RESPIRATORY_RATE_DAY_OFFSET, rrr, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_BARK) && json.get(FIELD_BARK).isJsonObject()) {
-            updateStringChannel(CHANNEL_BARK, json.get(FIELD_BARK).getAsJsonObject(), FIELD_STATUS);
+            JsonObject bark = json.get(FIELD_BARK).getAsJsonObject();
+            updateStringChannel(CHANNEL_BARK, bark, FIELD_STATUS);
+            updateIntChannel(CHANNEL_BARK_DAY_OFFSET, bark, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_SCRATCH) && json.get(FIELD_SCRATCH).isJsonObject()) {
-            updateStringChannel(CHANNEL_SCRATCH, json.get(FIELD_SCRATCH).getAsJsonObject(), FIELD_STATUS);
+            JsonObject scratch = json.get(FIELD_SCRATCH).getAsJsonObject();
+            updateStringChannel(CHANNEL_SCRATCH, scratch, FIELD_STATUS);
+            updateIntChannel(CHANNEL_SCRATCH_DAY_OFFSET, scratch, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_HEALTH_ALERTS) && json.get(FIELD_HEALTH_ALERTS).isJsonObject()) {
             JsonObject alerts = json.get(FIELD_HEALTH_ALERTS).getAsJsonObject();
@@ -122,7 +133,50 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
                 updateState(CHANNEL_UNSEEN_HEALTH_ALERTS, new DecimalType(alerts.get(FIELD_UNSEEN_COUNT).getAsInt()));
             }
         }
+        if (json.has(FIELD_SEPARATION_PHASE_STATUS) && json.get(FIELD_SEPARATION_PHASE_STATUS).isJsonObject()) {
+            boolean separationOngoingChannelLinked = isLinked(CHANNEL_SEPARATION_PHASE_ONGOING);
+            boolean separationStartTimeChannelLinked = isLinked(CHANNEL_SEPARATION_PHASE_STARTED_AT);
+            if (separationOngoingChannelLinked || separationStartTimeChannelLinked) {
+                JsonObject phase = json.get(FIELD_SEPARATION_PHASE_STATUS).getAsJsonObject();
+                if (phase.has(FIELD_IS_PHASE_ONGOING) && !phase.get(FIELD_IS_PHASE_ONGOING).isJsonNull()) {
+                    if (separationOngoingChannelLinked) {
+                        updateState(CHANNEL_SEPARATION_PHASE_ONGOING,
+                                OnOffType.from(phase.get(FIELD_IS_PHASE_ONGOING).getAsBoolean()));
+                    }
+                    if (separationStartTimeChannelLinked) {
+                        updateTimestampChannel(CHANNEL_SEPARATION_PHASE_STARTED_AT, phase, FIELD_PHASE_STARTED_AT);
+                    }
+                }
+            }
+        }
+        updateAssociatedReportTypes(json);
         updateTimestampChannel(CHANNEL_ACTIVITY_SYNCED_AT, json, FIELD_ACTIVITY_DATA_SYNCED_AT);
+    }
+
+    /**
+     * Joins the {@code type} of every element of the {@code associatedData} array into one comma-separated string
+     * and pushes it to {@link #CHANNEL_ASSOCIATED_REPORT_TYPES}.
+     */
+    private void updateAssociatedReportTypes(JsonObject json) {
+        if (!isLinked(CHANNEL_ASSOCIATED_REPORT_TYPES) || !json.has(FIELD_ASSOCIATED_DATA)
+                || !json.get(FIELD_ASSOCIATED_DATA).isJsonArray()) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement el : json.get(FIELD_ASSOCIATED_DATA).getAsJsonArray()) {
+            if (!el.isJsonObject()) {
+                continue;
+            }
+            JsonElement type = el.getAsJsonObject().get(FIELD_REPORT_TYPE);
+            if (type == null || type.isJsonNull()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(',');
+            }
+            sb.append(type.getAsString());
+        }
+        updateState(CHANNEL_ASSOCIATED_REPORT_TYPES, new StringType(sb.toString()));
     }
 
     @Override

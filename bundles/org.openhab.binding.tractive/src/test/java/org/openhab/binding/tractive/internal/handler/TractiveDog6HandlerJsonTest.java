@@ -60,7 +60,7 @@ import com.google.gson.JsonObject;
  * and the shared helpers in {@link TractiveTrackerHandler}.
  *
  * No bridge or HTTP — only JSON input and channel-update verification. {@code BaseThingHandler.scheduler}
- * is reflection-mocked in {@link #setUp()} for the buzzer auto-off prediction tests.
+ * is reflection-mocked in {@link #setUp()} for the buzzer/LED/live-tracking auto-off prediction tests.
  *
  * @author Erik De Boeck - Initial contribution
  */
@@ -222,6 +222,113 @@ class TractiveDog6HandlerJsonTest {
 
         assertDoesNotThrow(() -> handler.applyHealthOverview(json));
         verify(callback, never()).stateUpdated(any(ChannelUID.class), any(State.class));
+    }
+
+    @Test
+    void applyHealthOverviewNewFieldsUpdatesAllChannels() {
+        JsonObject activity = new JsonObject();
+        JsonArray hourly = new JsonArray();
+        for (int h = 0; h < 24; h++) {
+            hourly.add(h == 7 ? 5 : 0);
+        }
+        activity.add(TractiveBindingConstants.FIELD_HOURLY_DISTRIBUTION, hourly);
+
+        JsonObject bark = new JsonObject();
+        bark.addProperty(TractiveBindingConstants.FIELD_STATUS, "NORMAL");
+        bark.addProperty(TractiveBindingConstants.FIELD_DAY_OFFSET, -1);
+        JsonObject scratch = new JsonObject();
+        scratch.addProperty(TractiveBindingConstants.FIELD_STATUS, "INFREQUENT");
+        scratch.addProperty(TractiveBindingConstants.FIELD_DAY_OFFSET, 0);
+        JsonObject rhr = new JsonObject();
+        rhr.addProperty(TractiveBindingConstants.FIELD_STATUS, "NORMAL");
+        rhr.addProperty(TractiveBindingConstants.FIELD_DAY_OFFSET, -1);
+        JsonObject rrr = new JsonObject();
+        rrr.addProperty(TractiveBindingConstants.FIELD_STATUS, "NORMAL");
+        rrr.addProperty(TractiveBindingConstants.FIELD_DAY_OFFSET, -1);
+
+        JsonArray associated = new JsonArray();
+        JsonObject report = new JsonObject();
+        report.addProperty(TractiveBindingConstants.FIELD_REPORT_TYPE, "HEALTH_WEEKLY_REPORT");
+        associated.add(report);
+
+        JsonObject phase = new JsonObject();
+        phase.addProperty(TractiveBindingConstants.FIELD_IS_PHASE_ONGOING, true);
+        phase.addProperty(TractiveBindingConstants.FIELD_PHASE_STARTED_AT, 1784832952L);
+
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_ACTIVITY, activity);
+        json.add(TractiveBindingConstants.FIELD_BARK, bark);
+        json.add(TractiveBindingConstants.FIELD_SCRATCH, scratch);
+        json.add(TractiveBindingConstants.FIELD_RESTING_HEART_RATE, rhr);
+        json.add(TractiveBindingConstants.FIELD_RESTING_RESPIRATORY_RATE, rrr);
+        json.add(TractiveBindingConstants.FIELD_ASSOCIATED_DATA, associated);
+        json.add(TractiveBindingConstants.FIELD_SEPARATION_PHASE_STATUS, phase);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyHealthOverview(json));
+
+        assertEquals(new StringType("0,0,0,0,0,0,0,5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0"),
+                updates.get(TractiveBindingConstants.CHANNEL_ACTIVITY_HOURLY_DISTRIBUTION));
+        assertEquals(new DecimalType(-1), updates.get(TractiveBindingConstants.CHANNEL_BARK_DAY_OFFSET));
+        assertEquals(new DecimalType(0), updates.get(TractiveBindingConstants.CHANNEL_SCRATCH_DAY_OFFSET));
+        assertEquals(new DecimalType(-1), updates.get(TractiveBindingConstants.CHANNEL_RESTING_HEART_RATE_DAY_OFFSET));
+        assertEquals(new DecimalType(-1),
+                updates.get(TractiveBindingConstants.CHANNEL_RESTING_RESPIRATORY_RATE_DAY_OFFSET));
+        assertEquals(new StringType("HEALTH_WEEKLY_REPORT"),
+                updates.get(TractiveBindingConstants.CHANNEL_ASSOCIATED_REPORT_TYPES));
+        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_SEPARATION_PHASE_ONGOING));
+        assertEquals(Instant.ofEpochSecond(1784832952L),
+                ((DateTimeType) Objects
+                        .requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_SEPARATION_PHASE_STARTED_AT)))
+                        .getInstant());
+    }
+
+    @Test
+    void applyHealthOverviewAssociatedDataJoinsMultipleReportTypes() {
+        JsonArray associated = new JsonArray();
+        JsonObject a = new JsonObject();
+        a.addProperty(TractiveBindingConstants.FIELD_REPORT_TYPE, "HEALTH_WEEKLY_REPORT");
+        JsonObject b = new JsonObject();
+        b.addProperty(TractiveBindingConstants.FIELD_REPORT_TYPE, "HEALTH_MONTHLY_REPORT");
+        associated.add(a);
+        associated.add(b);
+
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_ASSOCIATED_DATA, associated);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyHealthOverview(json));
+
+        assertEquals(new StringType("HEALTH_WEEKLY_REPORT,HEALTH_MONTHLY_REPORT"),
+                updates.get(TractiveBindingConstants.CHANNEL_ASSOCIATED_REPORT_TYPES));
+    }
+
+    @Test
+    void applyHealthOverviewSeparationPhaseAbsentOrNullLeavesChannelsUntouched() {
+        handler.applyHealthOverview(new JsonObject());
+
+        JsonObject withNull = new JsonObject();
+        withNull.add(TractiveBindingConstants.FIELD_SEPARATION_PHASE_STATUS, JsonNull.INSTANCE);
+        handler.applyHealthOverview(withNull);
+
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_SEPARATION_PHASE_ONGOING)), any());
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_SEPARATION_PHASE_STARTED_AT)), any());
+    }
+
+    @Test
+    void applyHealthOverviewSeparationPhaseWithoutIsPhaseOngoingLeavesChannelsUntouched() {
+        JsonObject phase = new JsonObject();
+        phase.addProperty(TractiveBindingConstants.FIELD_PHASE_STARTED_AT, 1784832952L);
+
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_SEPARATION_PHASE_STATUS, phase);
+
+        handler.applyHealthOverview(json);
+
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_SEPARATION_PHASE_ONGOING)), any());
+        verify(callback, never()).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_SEPARATION_PHASE_STARTED_AT)), any());
     }
 
     @Test
@@ -566,6 +673,29 @@ class TractiveDog6HandlerJsonTest {
     }
 
     @Test
+    void lastContactCoalescedWithinThrottleWindow() {
+        handler.onChannelEvent("some_future_message_type", new JsonObject());
+        handler.onChannelEvent("some_future_message_type", new JsonObject());
+
+        verify(callback, times(1)).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LAST_CONTACT)), any(DateTimeType.class));
+    }
+
+    @Test
+    void lastContactBumpsAgainAfterThrottleWindow() throws Exception {
+        handler.onChannelEvent("some_future_message_type", new JsonObject());
+
+        Field lastContactField = TractiveTrackerHandler.class.getDeclaredField("lastContactUpdateMs");
+        lastContactField.setAccessible(true);
+        lastContactField.setLong(handler, System.currentTimeMillis() - 6_000L);
+
+        handler.onChannelEvent("some_future_message_type", new JsonObject());
+
+        verify(callback, times(2)).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LAST_CONTACT)), any(DateTimeType.class));
+    }
+
+    @Test
     void onChannelEventStartFailedLedCommandTypeTurnsLedChannelOff() {
         JsonObject event = new JsonObject();
         event.addProperty(TractiveBindingConstants.FIELD_COMMAND_TYPE, TractiveBindingConstants.VALUE_COMMAND_TYPE_LED);
@@ -663,6 +793,42 @@ class TractiveDog6HandlerJsonTest {
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER)),
                 eq(OnOffType.OFF));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER_REMAINING)),
+                eq(new QuantityType<>(0, Units.SECOND)));
+    }
+
+    @Test
+    void autoOffFiresAndUpdatesOnlyStillLinkedChannelWhenSwitchBecomesUnlinkedBeforeFiring() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                buzzerControlEvent(true, 0.05, TractiveBindingConstants.VALUE_STATE_REASON_POWER_SAVING));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+
+        when(callback.isChannelLinked(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER))))
+                .thenReturn(false);
+        clearInvocations(callback);
+        task.getValue().run();
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER)),
+                any());
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER_REMAINING)),
+                eq(new QuantityType<>(0, Units.SECOND)));
+    }
+
+    @Test
+    void autoOffFiresButUpdatesNothingWhenBothChannelsBecomeUnlinkedBeforeFiring() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                buzzerControlEvent(true, 0.05, TractiveBindingConstants.VALUE_STATE_REASON_POWER_SAVING));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+
+        when(callback.isChannelLinked(any())).thenReturn(false);
+        clearInvocations(callback);
+        task.getValue().run();
+
+        verify(callback, never()).stateUpdated(any(), any());
     }
 
     @Test
@@ -741,6 +907,8 @@ class TractiveDog6HandlerJsonTest {
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LED)),
                 eq(OnOffType.OFF));
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LED_REMAINING)),
+                eq(new QuantityType<>(0, Units.SECOND)));
     }
 
     @Test
@@ -821,6 +989,9 @@ class TractiveDog6HandlerJsonTest {
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIVE_TRACKING)),
                 eq(OnOffType.OFF));
+        verify(callback).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIVE_TRACKING_REMAINING)),
+                eq(new QuantityType<>(0, Units.SECOND)));
     }
 
     @Test

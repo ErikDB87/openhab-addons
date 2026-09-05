@@ -170,9 +170,31 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_ACTIVITY_SYNCED_AT = "health#activity-synced-at";
     /** Channel ID for scratch status (e.g. {@code INFREQUENT}). */
     public static final String CHANNEL_SCRATCH = "health#scratch";
+    /**
+     * Channel ID for Tractive's 24-element per-hour activity breakdown of the current day: a comma-separated list of 24
+     * integers.
+     */
+    public static final String CHANNEL_ACTIVITY_HOURLY_DISTRIBUTION = "health#activity-hourly-distribution";
+    /** Channel ID for "day offset" of resting-heart-rate. */
+    public static final String CHANNEL_RESTING_HEART_RATE_DAY_OFFSET = "health#resting-heart-rate-day-offset";
+    /** Channel ID for "day offset" resting-respiratory-rate. */
+    public static final String CHANNEL_RESTING_RESPIRATORY_RATE_DAY_OFFSET = "health#resting-respiratory-rate-day-offset";
+    /** Channel ID for "day offset" of scratch. */
+    public static final String CHANNEL_SCRATCH_DAY_OFFSET = "health#scratch-day-offset";
+    /**
+     * Channel ID for the report types bundled with the health overview, comma-separated (e.g.
+     * {@code HEALTH_WEEKLY_REPORT}).
+     */
+    public static final String CHANNEL_ASSOCIATED_REPORT_TYPES = "health#associated-report-types";
+    /** Channel ID for whether a separation-anxiety monitoring phase is currently ongoing for this pet. */
+    public static final String CHANNEL_SEPARATION_PHASE_ONGOING = "health#separation-phase-ongoing";
+    /** Channel ID for when the current separation-anxiety monitoring phase started; undefined while none is ongoing. */
+    public static final String CHANNEL_SEPARATION_PHASE_STARTED_AT = "health#separation-phase-started-at";
 
     /** Channel ID for bark status (e.g. {@code NORMAL}, {@code ELEVATED}). */
     public static final String CHANNEL_BARK = "dog#bark";
+    /** Channel ID for "day offset" of bark. */
+    public static final String CHANNEL_BARK_DAY_OFFSET = "dog#bark-day-offset";
 
     /**
      * Channel ID for the pet's breed-catalog ID(s), comma-separated. Only refreshed at Thing setup or via
@@ -462,6 +484,28 @@ public class TractiveBindingConstants {
     public static final String FIELD_MINUTES_NIGHT_SLEEP = "minutesNightSleep";
     /** JSON field name for minutes spent calm. */
     public static final String FIELD_MINUTES_CALM = "minutesCalm";
+    /**
+     * JSON field name for Tractive's 24-element per-hour activity breakdown of the current day, as a string, inside the
+     * nested {@link #FIELD_ACTIVITY} object.
+     */
+    public static final String FIELD_HOURLY_DISTRIBUTION = "hourlyDistribution";
+    /**
+     * JSON field name for "day offset" of a health sub-record; shared by the nested bark,
+     * scratch, resting-heart-rate and resting-respiratory-rate objects.
+     */
+    public static final String FIELD_DAY_OFFSET = "dayOffset";
+    /** JSON field name for "associated data", part of a health/overview response. */
+    public static final String FIELD_ASSOCIATED_DATA = "associatedData";
+    /** JSON field name for "type", inside an {@link #FIELD_ASSOCIATED_DATA} array element. */
+    public static final String FIELD_REPORT_TYPE = "type";
+    /**
+     * JSON field name for the nested separation-phase-status object in a health/overview response; may be JSON null.
+     */
+    public static final String FIELD_SEPARATION_PHASE_STATUS = "separationPhaseStatus";
+    /** JSON field name for whether a separation phase is ongoing, inside {@link #FIELD_SEPARATION_PHASE_STATUS}. */
+    public static final String FIELD_IS_PHASE_ONGOING = "isPhaseOngoing";
+    /** JSON field name for when the current separation phase started, inside {@link #FIELD_SEPARATION_PHASE_STATUS}. */
+    public static final String FIELD_PHASE_STARTED_AT = "phaseStartedAt";
 
     /** JSON field name linking a pet ({@code trackable_object}) back to its tracker ID. */
     public static final String FIELD_DEVICE_ID = "device_id";

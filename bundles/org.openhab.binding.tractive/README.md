@@ -150,6 +150,7 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 > A failed _deactivation_ would, in principle, also force the Item to `OFF` incorrectly if the device is still on, since the failure message doesn't indicate direction — but deactivation commands don't appear to produce this message at all; they queue with no cloud confirmation, relying instead on the local auto-off prediction (see below, covering all three command channels) to correct the Item once its own hardware timer would have expired regardless.
 >
 > **Note 3:** The `-timeout` and `-remaining` channels are only updated by the real-time channel push, not by REST polling — the command endpoints' own synchronous HTTP response is not reliable (see Note 2), so there is nothing safe to poll for these two fields.
+> The local auto-off prediction (see Note 2) also zeroes `-remaining` when it fires, alongside forcing the Switch to `OFF` — that `0` is the same local guess as the Switch state, not a fresh cloud confirmation.
 >
 > **Note 4:** The tracker's physical button silences an active buzzer and reports that fact back to the cloud.
 >
