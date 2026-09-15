@@ -2,6 +2,19 @@
 
 **Purpose:** every assumption baked into this binding (endpoint shapes, real-time message dialect, command timing, dormancy behavior) was reverse-engineered from a single Tractive Dog 6 unit. Before adding support for a new tracker model — or trusting this binding with one — work through this checklist and record your results in a dated section of this file (or a new `<model>-findings.md` in this directory). Don't assume anything below "just works" the same way on a different model until you've confirmed it yourself.
 
+## Tools in this directory
+
+Three self-contained, standard-library-only Python scripts support the shape-diffing and endpoint-probing this checklist asks for. None take a tracker/pet ID on the command line — only via an environment variable or an interactive prompt — so nothing account-specific ends up in shell history or a saved script.
+
+- **`extract_tractive_json.py`** — pulls every JSON payload out of a raw binding log (both the real-time channel's `Channel line: {...}` traces and REST `GET <url> -> {...}` traces) into a JSONL file, and prints a summary of distinct message "shapes" (grouped by `message` plus sorted top-level keys) so a new or unexpected shape stands out immediately instead of getting lost among repetitive keep-alive lines. Use it against a capture from the new tracker for the shape-diffing in sections B and C.
+  `python extract_tractive_json.py <log_file> [output_file]`
+- **`app_endpoint_probe.py`** — dumps `user/me`, `user/widget-data`, `user/{id}/trackers`, `tracker/{trackerId}`, and `user/orion_attributes` in full. Useful for a raw-body comparison against the Dog 6 shapes already documented in the binding's own reference material, beyond what the binding itself reads.
+  `python app_endpoint_probe.py`
+- **`health_history_probe.py`** — probes the per-day and range historical health endpoints (`activity`/`sleep`/`bark`/`resting-heart-rate`/`resting-respiratory-rate`/`scratch` `day-overview`, plus the two range `overview` endpoints and `activity/streak-overview`) for section G.
+  `python health_history_probe.py [--days N] [--legacy]`
+
+All three: credentials via `TRACTIVE_EMAIL`/`TRACTIVE_PASSWORD` env vars or an interactive (hidden-password) prompt; every response is appended to a `*_output.jsonl`/`extracted.jsonl` file next to the script plus a compact line printed to stdout; a 429 backs off 6 s and retries once. For rate-limit probing specifically (checklist item 21), see `doc/rate-limit-probes/` instead — those two scripts already characterize Tractive's real 429 behavior against this binding's own account, with a documented baseline to compare a new model's results against.
+
 ## A. Setup
 
 - **1.** Confirm the new tracker appears in `GET user/{userId}/trackers` and that `GET tracker/{trackerId}` returns a `model_number` not already known to the binding — if it _does_ match an existing model, this is really the same hardware family, not a new one.
@@ -9,15 +22,15 @@
 
 ## B. REST endpoint shapes
 
-- **3.** Diff `GET tracker/{trackerId}`'s fields against the Dog 6 shape this binding already handles — same field names? Same `capabilities` vocabulary? Any fields present here that are missing or extra?
+- **3.** Diff `GET tracker/{trackerId}`'s fields against the Dog 6 shape this binding already handles — same field names? Same `capabilities` vocabulary? Any fields present here that are missing or extra? (`extract_tractive_json.py`/`app_endpoint_probe.py` in this directory can help pull and compare the raw shapes.)
 - **4.** Same diff for `device_hw_report`, `device_pos_report`, `tracker/{id}/positions`, `trackable_object/{petId}`, and `pet/{petId}/health/overview`.
 - **5.** Confirm `state`/`state_reason` and `charging_state`/`battery_state` use the same enum values (`OPERATIONAL`, `POWER_SAVING`, `NOT_CHARGING`, `REGULAR`, etc.) — note any new values seen.
 - **6.** Check whether `capabilities` includes `BUZZER`/`LED`/`LT` at all — some models may lack one of these three features entirely.
 
 ## C. Real-time channel dialect
 
-- **7.** Confirm the channel delivers `tracker_status` and `health_overview` messages with the same top-level shape (nested `position`/`hardware`/`prioritized_zone` objects, flat `led_control`/`buzzer_control`/`live_tracking` objects) — this has so far only been confirmed against the Dog 6.
-- **8.** Watch for any message types beyond the seven already catalogued for the Dog 6: `handshake`, `keep-alive`, `tracker_status`, `health_overview`, `activity_data_updated`, `command_confirmed`, `start_failed`.
+- **7.** Confirm the channel delivers `tracker_status` and `health_overview` messages with the same top-level shape (nested `position`/`hardware`/`prioritized_zone` objects, flat `led_control`/`buzzer_control`/`live_tracking` objects) — this has so far only been confirmed against the Dog 6. (`extract_tractive_json.py`'s shape summary is built for exactly this kind of diffing.)
+- **8.** Watch for any message types beyond the ones already catalogued for the Dog 6: `handshake`, `keep-alive`, `tracker_status`, `health_overview`, `activity_data_updated`, `command_confirmed`, `start_failed`, `command_execution_failed`, `graph_sync`, `power_saving_zone_scan_result`, `pull_notifications_updated`.
 - **9.** If the dialect differs at all, `TractiveTrackerHandler.onChannelEvent()` (currently one shared concrete method covering every tracker model) will need to become model-aware — flag this early rather than after building out full support.
 
 ## D. Commands — normal operation
@@ -48,12 +61,12 @@
 
 ## G. Health / activity data
 
-- **19.** Confirm `bark`/`scratch`/`restingHeartRate`/`restingRespiratoryRate` use the same status vocabulary (`NORMAL`, `ELEVATED`, `INFREQUENT`, `NOT_SYNCED_YET`, `CALCULATING_BASELINE`, etc.), and if possible, confirm whether `NOT_SYNCED_YET` correlates with the collar being physically off the pet.
+- **19.** Confirm `bark`/`scratch`/`restingHeartRate`/`restingRespiratoryRate` use the same status vocabulary (`NORMAL`, `ELEVATED`, `INFREQUENT`, `NOT_SYNCED_YET`, `CALCULATING_BASELINE`, etc.), and if possible, confirm whether `NOT_SYNCED_YET` correlates with the collar being physically off the pet. (`health_history_probe.py` in this directory covers the per-day/historical endpoints beyond what `health/overview` alone shows, if you want more samples of this vocabulary.)
 - **20.** Confirm `rest` is still always `null`, or capture a sample where it isn't (its shape is otherwise fully unknown).
 
 ## H. Rate limiting & errors
 
-- **21.** If practical, deliberately trigger HTTP 429 (e.g. a very short poll interval for a few minutes) and confirm the response body/backoff behavior matches what this binding expects.
+- **21.** If practical, deliberately trigger HTTP 429 (e.g. a very short poll interval for a few minutes) and confirm the response body/backoff behavior matches what this binding expects. See `doc/rate-limit-probes/` for ready-made probes and this binding's own measured baseline (capacity/refill-rate figures) to compare a new model's account against.
 - **22.** Watch for error codes `4001`/`4002` (seen by other unofficial Tractive API clients but never by this binding) — if either appears, capture the exact response body.
 
 ## I. Wrap-up

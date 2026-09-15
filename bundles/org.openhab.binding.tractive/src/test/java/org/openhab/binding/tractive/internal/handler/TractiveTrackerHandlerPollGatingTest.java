@@ -36,6 +36,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.util.PollGuard;
 import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.core.config.core.Configuration;
@@ -96,6 +97,7 @@ class TractiveTrackerHandlerPollGatingTest {
     private @NonNullByDefault({}) ContentResponse response;
     @Mock
     private @NonNullByDefault({}) ScheduledExecutorService mockScheduler;
+    private final TractiveStateDescriptionProvider stateDescriptionProvider = new TractiveStateDescriptionProvider();
     private @NonNullByDefault({}) TractiveDog6Handler handler;
 
     @BeforeEach
@@ -124,7 +126,7 @@ class TractiveTrackerHandlerPollGatingTest {
                 mockScheduler.scheduleWithFixedDelay(any(Runnable.class), anyLong(), anyLong(), any(TimeUnit.class)))
                 .thenAnswer(inv -> mock(ScheduledFuture.class));
 
-        handler = new TractiveDog6Handler(thing) {
+        handler = new TractiveDog6Handler(thing, stateDescriptionProvider) {
             {
                 trackerId = SAMSON_TRACKER_ID;
             }
@@ -142,23 +144,30 @@ class TractiveTrackerHandlerPollGatingTest {
     }
 
     @Test
-    void pollTrackerDetailsSkipsHttpCallWhenNothingLinked() {
+    void pollTrackerDetailsSkipsHttpCallOnLaterPollsWhenNothingLinked() {
         when(callback.isChannelLinked(any())).thenReturn(false);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{\"model_number\":\"TG6C\"}");
 
+        // The first poll always runs -- it seeds the Thing properties and Tracker Status regardless of links.
+        handler.pollTrackerDetails(bridge);
+        clearInvocations(httpClient);
         handler.pollTrackerDetails(bridge);
 
         verifyNoInteractions(httpClient);
     }
 
     @Test
-    void pollTrackerDetailsMakesHttpCallWhenModelNumberIsLinked() {
+    void pollTrackerDetailsMakesHttpCallOnLaterPollWhenATrackerStatusChannelIsLinked() {
         lenient()
                 .when(callback
-                        .isChannelLinked(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_MODEL_NUMBER))))
+                        .isChannelLinked(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_TRACKER_STATE))))
                 .thenReturn(true);
         when(response.getStatus()).thenReturn(HttpStatus.OK_200);
-        when(response.getContentAsString()).thenReturn("{\"model_number\":\"TG6C\"}");
+        when(response.getContentAsString()).thenReturn("{\"state\":\"OPERATIONAL\"}");
 
+        handler.pollTrackerDetails(bridge);
+        clearInvocations(httpClient);
         handler.pollTrackerDetails(bridge);
 
         verify(httpClient).newRequest(anyString());
@@ -189,7 +198,7 @@ class TractiveTrackerHandlerPollGatingTest {
     }
 
     @Test
-    void trackerStatusFieldsAreNotRewrittenOnSecondPollButDeviceInfoIs() {
+    void trackerStatusChannelsAreNotRewrittenOnSecondPollButDeviceInfoPropertiesAre() {
         when(callback.isChannelLinked(any())).thenReturn(true);
         when(response.getStatus()).thenReturn(HttpStatus.OK_200);
         // Each successful GET reads getContentAsString() twice -- once for executeGet()'s trace log, once for
@@ -205,10 +214,56 @@ class TractiveTrackerHandlerPollGatingTest {
         verify(callback, times(1)).stateUpdated(
                 eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_TRACKER_STATE)),
                 eq(new StringType("OPERATIONAL")));
-        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_MODEL_NUMBER)),
-                eq(new StringType("TG6C")));
-        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_MODEL_NUMBER)),
-                eq(new StringType("TG6D")));
+        verify(thing).setProperty(Thing.PROPERTY_MODEL_ID, "TG6C");
+        verify(thing).setProperty(Thing.PROPERTY_MODEL_ID, "TG6D");
+    }
+
+    @Test
+    void pollAllPollsTrackerDetailsWhenBatterySaveModeIsLinked() {
+        lenient()
+                .when(callback.isChannelLinked(
+                        eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BATTERY_SAVE_MODE))))
+                .thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{\"battery_save_mode\":true}");
+
+        handler.pollAll();
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BATTERY_SAVE_MODE)),
+                eq(OnOffType.ON));
+    }
+
+    @Test
+    void pollAllSkipsTrackerDetailsHttpCallOnLaterCyclesWhenNoDeviceInfoChannelLinked() {
+        when(callback.isChannelLinked(any())).thenReturn(false);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        // The first cycle's tracker-details poll always runs (it seeds the Thing properties); later cycles skip it.
+        handler.pollAll();
+        clearInvocations(httpClient);
+        handler.pollAll();
+
+        verifyNoInteractions(httpClient);
+    }
+
+    @Test
+    void pollTrackerDetailsSetsTheNewDeviceInfoProperties() {
+        when(callback.isChannelLinked(any())).thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn(
+                "{\"capabilities\":[\"LED\",\"BUZZER\"],\"supported_geofence_types\":[\"CIRCLE\",\"RECTANGLE\"],"
+                        + "\"self_test_available\":false,\"bluetooth_mac\":\"AA:BB:CC:DD:EE:FF\","
+                        + "\"read_only\":true,\"read_only_since\":1712336035}");
+
+        handler.pollTrackerDetails(bridge);
+
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_CAPABILITIES, "LED,BUZZER");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_SUPPORTED_GEOFENCE_TYPES, "CIRCLE,RECTANGLE");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_SELF_TEST_AVAILABLE, "false");
+        verify(thing).setProperty(Thing.PROPERTY_MAC_ADDRESS, "AA:BB:CC:DD:EE:FF");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_TRACKER_READ_ONLY, "true");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_TRACKER_READ_ONLY_SINCE, "2024-04-05T16:53:55Z");
     }
 
     @Test
@@ -356,9 +411,10 @@ class TractiveTrackerHandlerPollGatingTest {
         verify(mockScheduler).schedule(task.capture(), eq(0L), eq(TimeUnit.SECONDS));
         task.getValue().run();
 
-        // Only pollProfile() is unconditional (no isLinked() gate) -- with nothing linked in this test, it's
-        // the one call that proves the guarded block actually ran.
-        verify(httpClient).newRequest(anyString());
+        // pollTrackerDetails() (via pollAll(), seeding device-info properties/Tracker Status the first time
+        // ever) and pollProfile() are both unconditional on a first run regardless of links -- two calls, even
+        // with nothing linked in this test.
+        verify(httpClient, times(2)).newRequest(anyString());
         verify(callback).statusUpdated(eq(thing), argThat(info -> info.getStatus() == ThingStatus.ONLINE));
     }
 
@@ -410,7 +466,9 @@ class TractiveTrackerHandlerPollGatingTest {
         verify(mockScheduler).schedule(task.capture(), eq(0L), eq(TimeUnit.SECONDS));
         task.getValue().run();
 
-        verify(httpClient).newRequest(anyString());
+        // Same reasoning as initializePollsAndGoesOnlineWhenBridgeHasAccessToken: pollTrackerDetails() (via
+        // pollAll()) and pollProfile() both run unconditionally on this first cycle.
+        verify(httpClient, times(2)).newRequest(anyString());
         verify(callback).statusUpdated(eq(thing), argThat(
                 info -> info.getStatus() == ThingStatus.ONLINE && info.getStatusDetail() == ThingStatusDetail.NONE));
     }

@@ -130,25 +130,39 @@ public class TractiveBindingConstants {
     /** Channel ID for the ID of the tracker's configured Power Saving Zone. See {@link #CHANNEL_TRACKER_STATE}. */
     public static final String CHANNEL_POWER_SAVING_ZONE_ID = "tracker-status#power-saving-zone-id";
     /**
-     * Channel ID for the tracker's hardware model code (e.g. {@code TG6C}). Lives in its own {@code device-info}
-     * group -- unlike every {@code hardware}/{@code tracker-status} channel, this data has no real-time channel
-     * equivalent at all, so it's only ever fetched once at Thing setup or via the "Refresh hardware" action, never
-     * on the recurring poll schedule.
+     * Thing property name for the tracker's hardware color/edition variant (e.g. {@code BROWN-LINES}). This field,
+     * plus {@code model_number}, {@code fw_version} and {@link #PROPERTY_GEOFENCE_SENSITIVITY}, are Thing
+     * properties rather than channels ({@code model_number}/{@code fw_version} use openHAB core's own
+     * {@code modelId}/{@code firmwareVersion} names): they describe the hardware and change at most across an OTA
+     * update, so they carry no rule or charting value.
      */
-    public static final String CHANNEL_MODEL_NUMBER = "device-info#model-number";
+    public static final String PROPERTY_HARDWARE_EDITION = "hardwareEdition";
+    /** Thing property name for the configured geofence entry/exit detection sensitivity (e.g. {@code HIGH}). */
+    public static final String PROPERTY_GEOFENCE_SENSITIVITY = "geofenceSensitivity";
     /**
-     * Channel ID for the tracker's hardware color/edition variant (e.g. {@code BROWN-LINES}). See
-     * {@link #CHANNEL_MODEL_NUMBER}.
+     * Thing property name for the tracker's onboard hardware/firmware capability flags (e.g. {@code LED},
+     * {@code BUZZER}, {@code ACTIVITY_TRACKING}), comma-joined. Static per model/firmware, not per-tracker state.
      */
-    public static final String CHANNEL_HW_EDITION = "device-info#hw-edition";
-    /** Channel ID for the tracker's onboard firmware version string. See {@link #CHANNEL_MODEL_NUMBER}. */
-    public static final String CHANNEL_FIRMWARE_VERSION = "device-info#firmware-version";
-    /** Channel ID for the configured geofence entry/exit detection sensitivity. See {@link #CHANNEL_MODEL_NUMBER}. */
-    public static final String CHANNEL_GEOFENCE_SENSITIVITY = "device-info#geofence-sensitivity";
+    public static final String PROPERTY_CAPABILITIES = "capabilities";
+    /**
+     * Thing property name for which geofence shapes this tracker+app combination supports drawing (e.g.
+     * {@code CIRCLE}, {@code RECTANGLE}, {@code POLYGON}), comma-joined.
+     */
+    public static final String PROPERTY_SUPPORTED_GEOFENCE_TYPES = "supportedGeofenceTypes";
+    /** Thing property name for whether the tracker offers a self-diagnostic test feature via the app. */
+    public static final String PROPERTY_SELF_TEST_AVAILABLE = "selfTestAvailable";
+    /**
+     * Thing property name for whether the authenticated account only has shared/invited-level access to this
+     * tracker, as opposed to owner-level access -- distinct from {@code profile#read-only}, which reflects the
+     * same kind of account-level permission but on the pet ({@code trackable_object/{petId}}), a different object.
+     */
+    public static final String PROPERTY_TRACKER_READ_ONLY = "trackerReadOnly";
+    /** Thing property name for when {@link #PROPERTY_TRACKER_READ_ONLY} was set to its current value. */
+    public static final String PROPERTY_TRACKER_READ_ONLY_SINCE = "trackerReadOnlySince";
     /**
      * Channel ID for the status of the Tractive subscription covering this tracker (e.g. {@code ACTIVE}). From
      * {@code user/widget-data}, seeded once at startup and refreshable via the hardware refresh action — never
-     * on the recurring schedule. See {@link #CHANNEL_MODEL_NUMBER}.
+     * on the recurring schedule. See {@link #CHANNEL_BATTERY_SAVE_MODE}.
      */
     public static final String CHANNEL_SUBSCRIPTION_STATUS = "device-info#subscription-status";
     /**
@@ -241,22 +255,31 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_BARK_DAY_OFFSET = "dog#bark-day-offset";
 
     /**
-     * Channel ID for the pet's breed-catalog ID(s), comma-separated. Only refreshed at Thing setup or via
-     * {@code refreshProfile()}.
+     * Thing property name for the pet's breed-catalog ID(s), comma-separated; not human-readable breed names. Only
+     * refreshed at Thing setup or via {@code refreshProfile()}.
      */
-    public static final String CHANNEL_BREED_IDS = "profile#breed-ids";
-    /** Channel ID for the pet's sex. Only refreshed at Thing setup or via {@code refreshProfile()}. */
-    public static final String CHANNEL_GENDER = "profile#gender";
-    /** Channel ID for the pet's date of birth. Only refreshed at Thing setup or via {@code refreshProfile()}. */
-    public static final String CHANNEL_BIRTHDAY = "profile#birthday";
-    /** Channel ID for the pet's height. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    public static final String PROPERTY_BREED_IDS = "breedIds";
+    /** Thing property name for the pet's sex. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    public static final String PROPERTY_GENDER = "gender";
+    /**
+     * Thing property name for the pet's date of birth. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_BIRTHDAY = "birthday";
+    /**
+     * Channel ID for the pet's height. Only refreshed at Thing setup or via {@code refreshProfile()}. Writable for
+     * the pet's owner account, rejected for a shared/{@code read_only} one -- see {@link #PROPERTY_PET_READ_ONLY}.
+     */
     public static final String CHANNEL_HEIGHT = "profile#height";
-    /** Channel ID for the pet's weight. Only refreshed at Thing setup or via {@code refreshProfile()}. */
+    /**
+     * Channel ID for the pet's weight. Only refreshed at Thing setup or via {@code refreshProfile()}. Writable for
+     * the pet's owner account, rejected for a shared/{@code read_only} one -- see {@link #PROPERTY_PET_READ_ONLY}.
+     */
     public static final String CHANNEL_WEIGHT = "profile#weight";
     /**
-     * Channel ID for whether the pet is spayed/neutered. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     * Thing property name for whether the pet is spayed/neutered. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
      */
-    public static final String CHANNEL_NEUTERED = "profile#neutered";
+    public static final String PROPERTY_NEUTERED = "neutered";
     /**
      * Channel ID for the pet's configured home location. Only refreshed at Thing setup or via {@code refreshProfile()}.
      */
@@ -264,71 +287,72 @@ public class TractiveBindingConstants {
     /** Channel ID for when the Profile channel group was last fetched. */
     public static final String CHANNEL_PROFILE_LAST_UPDATED = "profile#last-updated";
     /**
-     * Channel ID for whether the owner opted this pet out of Tractive's activity-leaderboard/community feature.
-     * Only refreshed at Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_LEADERBOARD_OPT_OUT = "profile#leaderboard-opt-out";
-    /**
-     * Channel ID for whether the authenticated account has owner-level (as opposed to shared/invited-account)
-     * permission on this pet. Only refreshed at Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_PROFILE_READ_ONLY = "profile#read-only";
-    /**
-     * Channel ID for when this pet profile was first created in Tractive. Only refreshed at Thing setup or via
-     * {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_PROFILE_CREATED_AT = "profile#created-at";
-    /**
-     * Channel ID for the pet's species (e.g. {@code DOG}). Only refreshed at Thing setup or via
-     * {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_PET_TYPE = "profile#pet-type";
-    /**
-     * Channel ID for the pet's microchip ID, if entered in the app. Only refreshed at Thing setup or via
-     * {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_CHIP_ID = "profile#chip-id";
-    /**
-     * Channel ID for the pet's Leg Index Measurement (LIM), one of two inputs to the Feline Body Mass Index (FBMI)
-     * -- always {@code null} for a {@code DOG} {@link #CHANNEL_PET_TYPE}, since FBMI is a cat-specific formula.
-     * Only refreshed at Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_LIM = "profile#lim";
-    /**
-     * Channel ID for the pet's ribcage circumference, the other FBMI input alongside {@link #CHANNEL_LIM}. Same
-     * dog/cat caveat applies. Only refreshed at Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_RIBCAGE = "profile#ribcage";
-    /**
-     * Channel ID for the pet's linked Instagram handle, if set. Only refreshed at Thing setup or via
-     * {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_INSTAGRAM_USERNAME = "profile#instagram-username";
-    /**
-     * Channel ID for whether {@code profile#weight} is a real user-entered value or a breed-average default. Only
-     * refreshed at Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_WEIGHT_IS_DEFAULT = "profile#weight-is-default";
-    /**
-     * Channel ID for whether {@code profile#height} is a real user-entered value or a breed-average default. Only
-     * refreshed at Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_HEIGHT_IS_DEFAULT = "profile#height-is-default";
-    /**
-     * Channel ID for the ID referencing the pet's profile photo in Tractive's media storage. Only refreshed at
-     * Thing setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_PROFILE_PICTURE_ID = "profile#profile-picture-id";
-    /**
-     * Channel ID for a comma-separated list of IDs referencing the pet's gallery photos. Only refreshed at Thing
-     * setup or via {@code refreshProfile()}.
-     */
-    public static final String CHANNEL_GALLERY_PICTURE_IDS = "profile#gallery-picture-ids";
-    /**
-     * Channel ID for whether the owner consented to sharing this pet's walk data, a Tractive community/walk-sharing
+     * Thing property name for whether the owner opted this pet out of Tractive's activity-leaderboard/community
      * feature. Only refreshed at Thing setup or via {@code refreshProfile()}.
      */
-    public static final String CHANNEL_WALK_SHARING_CONSENT = "profile#walk-sharing-consent";
+    public static final String PROPERTY_LEADERBOARD_OPT_OUT = "leaderboardOptOut";
+    /**
+     * Thing property name for whether the authenticated account has owner-level (as opposed to shared/invited
+     * -account) permission on this pet -- distinct from {@link #PROPERTY_TRACKER_READ_ONLY}, the same kind of
+     * permission on the tracker, a different object. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_PET_READ_ONLY = "petReadOnly";
+    /**
+     * Thing property name for when this pet profile was first created in Tractive. Only refreshed at Thing setup
+     * or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_PROFILE_CREATED_AT = "profileCreatedAt";
+    /**
+     * Thing property name for the pet's species (e.g. {@code DOG}). Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_PET_TYPE = "petType";
+    /**
+     * Thing property name for the pet's microchip ID, if entered in the app. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_CHIP_ID = "chipId";
+    /**
+     * Thing property name for the pet's Leg Index Measurement (LIM), one of two inputs to the Feline Body Mass
+     * Index (FBMI) -- always {@code null} for a {@code DOG} {@link #PROPERTY_PET_TYPE}, since FBMI is a
+     * cat-specific formula. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_LIM = "lim";
+    /**
+     * Thing property name for the pet's ribcage circumference, the other FBMI input alongside {@link #PROPERTY_LIM}.
+     * Same dog/cat caveat applies. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_RIBCAGE = "ribcage";
+    /**
+     * Thing property name for the pet's linked Instagram handle, if set. Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_INSTAGRAM_USERNAME = "instagramUsername";
+    /**
+     * Thing property name for whether {@code profile#weight} is a real user-entered value or a breed-average
+     * default. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_WEIGHT_IS_DEFAULT = "weightIsDefault";
+    /**
+     * Thing property name for whether {@code profile#height} is a real user-entered value or a breed-average
+     * default. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_HEIGHT_IS_DEFAULT = "heightIsDefault";
+    /**
+     * Thing property name for the ID referencing the pet's profile photo in Tractive's media storage. Only
+     * refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_PROFILE_PICTURE_ID = "profilePictureId";
+    /**
+     * Thing property name for a comma-separated list of IDs referencing the pet's gallery photos. Only refreshed
+     * at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_GALLERY_PICTURE_IDS = "galleryPictureIds";
+    /**
+     * Thing property name for whether the owner consented to sharing this pet's walk data, a Tractive
+     * community/walk-sharing feature. Only refreshed at Thing setup or via {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_WALK_SHARING_CONSENT = "walkSharingConsent";
 
     /** JSON field name for the account email in the {@code POST auth/token} request body. */
     public static final String FIELD_PLATFORM_EMAIL = "platform_email";
@@ -448,7 +472,7 @@ public class TractiveBindingConstants {
     public static final String FIELD_BATTERY_STATE = "battery_state";
     /**
      * JSON field name for the tracker's model number, in {@code tracker/{trackerId}}. Used to resolve its thing type
-     * during discovery, and feeds {@link #CHANNEL_MODEL_NUMBER} on the running thing.
+     * during discovery, and surfaced as the {@code modelId} Thing property on the running thing.
      */
     public static final String FIELD_MODEL_NUMBER = "model_number";
     /** JSON field name for the tracker's onboard firmware version string, in {@code tracker/{trackerId}}. */
@@ -457,6 +481,30 @@ public class TractiveBindingConstants {
     public static final String FIELD_HW_EDITION = "hw_edition";
     /** JSON field name for the configured geofence entry/exit detection sensitivity, in {@code tracker/{trackerId}}. */
     public static final String FIELD_GEOFENCE_SENSITIVITY = "geofence_sensitivity";
+    /**
+     * JSON field name for the tracker's onboard hardware/firmware capability flags array, in
+     * {@code tracker/{trackerId}}.
+     */
+    public static final String FIELD_CAPABILITIES = "capabilities";
+    /**
+     * JSON field name for which geofence shapes this tracker+app combination supports drawing, in
+     * {@code tracker/{trackerId}}.
+     */
+    public static final String FIELD_SUPPORTED_GEOFENCE_TYPES = "supported_geofence_types";
+    /**
+     * JSON field name for whether the tracker offers a self-diagnostic test feature, in {@code tracker/{trackerId}}.
+     */
+    public static final String FIELD_SELF_TEST_AVAILABLE = "self_test_available";
+    /**
+     * JSON field name for the tracker's own Bluetooth MAC address, in {@code tracker/{trackerId}}; always
+     * {@code null} in every capture so far.
+     */
+    public static final String FIELD_BLUETOOTH_MAC = "bluetooth_mac";
+    /**
+     * JSON field name for when {@link #FIELD_READ_ONLY} (as read from {@code tracker/{trackerId}}) was set to its
+     * current value.
+     */
+    public static final String FIELD_READ_ONLY_SINCE = "read_only_since";
     /**
      * JSON field name for the tracker's battery-save-mode flag, in {@code tracker/{trackerId}} (both directions:
      * it is read from that response and sent as the sole key of the {@code POST tracker/{trackerId}/battery_save_mode}
@@ -590,6 +638,11 @@ public class TractiveBindingConstants {
     public static final String FIELD_HEIGHT = "height";
     /** JSON field name for the pet's weight in grams, inside {@link #FIELD_DETAILS}. */
     public static final String FIELD_WEIGHT = "weight";
+    /**
+     * JSON field name for a {@code pet_detail} resource's optimistic-concurrency version. Required, and must be
+     * fresh, on every {@code PUT pet_detail/{id}} write -- a stale value is rejected with HTTP 400, code 7002.
+     */
+    public static final String FIELD_VERSION = "_version";
     /** JSON field name for whether the pet is spayed/neutered, inside {@link #FIELD_DETAILS}. */
     public static final String FIELD_NEUTERED = "neutered";
     /** JSON field name for the pet's breed-catalog ID(s) array, inside {@link #FIELD_DETAILS}. */
@@ -605,9 +658,10 @@ public class TractiveBindingConstants {
      */
     public static final String FIELD_LEADERBOARD_OPT_OUT = "leaderboard_opt_out";
     /**
-     * JSON field name for account-level ownership/permission on this pet, in {@code trackable_object/{petId}}
+     * JSON field name for account-level ownership/permission -- on the pet, in {@code trackable_object/{petId}}
      * (top-level and, identically, {@link #FIELD_DETAILS}-nested -- only the top-level copy is read, since the two
-     * were confirmed to always agree).
+     * were confirmed to always agree); the same literal key, same meaning, also appears on the tracker itself in
+     * {@code tracker/{trackerId}}, surfaced there as {@link #PROPERTY_TRACKER_READ_ONLY}.
      */
     public static final String FIELD_READ_ONLY = "read_only";
     /** JSON field name for when this pet profile was created, in {@code trackable_object/{petId}}. */
@@ -618,13 +672,24 @@ public class TractiveBindingConstants {
     public static final String FIELD_CHIP_ID = "chip_id";
     /**
      * JSON field name for the pet's Leg Index Measurement, inside {@link #FIELD_DETAILS} -- see
-     * {@link #CHANNEL_LIM} for what this measures.
+     * {@link #PROPERTY_LIM} for what this measures.
      */
     public static final String FIELD_LIM = "lim";
     /** JSON field name for the pet's ribcage circumference, inside {@link #FIELD_DETAILS}. */
     public static final String FIELD_RIBCAGE = "ribcage";
     /** JSON field name for the pet's linked Instagram handle, inside {@link #FIELD_DETAILS}. */
     public static final String FIELD_INSTAGRAM_USERNAME = "instagram_username";
+    /**
+     * The eleven writable field names of the {@code PetDetailGraphObject} write DTO behind
+     * {@code PUT pet_detail/{id}}, a strict subset of what {@link #FIELD_DETAILS} exposes for reading. Used to
+     * build a full-object write body from a freshly-fetched {@code details} object, copying every field verbatim
+     * except the one actually being changed. Declared here, after all eleven fields it references, because a
+     * static field initializer in Java cannot forward-reference another field of the same class declared later
+     * in the file.
+     */
+    public static final String[] PET_DETAIL_WRITE_FIELDS = { FIELD_NAME, FIELD_PET_TYPE, FIELD_BREED_IDS, FIELD_GENDER,
+            FIELD_BIRTHDAY, FIELD_HEIGHT, FIELD_WEIGHT, FIELD_CHIP_ID, FIELD_NEUTERED, FIELD_LIM,
+            FIELD_INSTAGRAM_USERNAME };
     /**
      * JSON field name for whether {@link #FIELD_WEIGHT} is a real value or a breed-average default, inside
      * {@link #FIELD_DETAILS}.

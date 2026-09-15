@@ -66,11 +66,11 @@ It also maintains a persistent real-time event stream that pushes position and h
 
 ### `dog-6` Thing
 
-| Parameter         | Type    | Required | Default | Description                                                                                                                                                                                                                                                                                                                                         |
-| ----------------- | ------- | -------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `trackerId`       | text    | yes      |         | 8-character tracker hardware ID (e.g. `HBDYUFSC`)                                                                                                                                                                                                                                                                                                   |
-| `trackedPetId`    | text    | yes      |         | ID of the pet ("trackable object"), linked to this tracker                                                                                                                                                                                                                                                                                          |
-| `refreshInterval` | integer | no       | 180     | REST polling interval in seconds, backstopping `position`, `hardware`'s battery level, and `health`/`dog` alongside the real-time channel; set to 0 to disable and rely solely on real-time channel updates. `tracker-status`, `device-info`, and `profile` are never on this schedule — see their own sections below. Low values at your own risk¹ |
+| Parameter         | Type    | Required | Default | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ----------------- | ------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `trackerId`       | text    | yes      |         | 8-character tracker hardware ID (e.g. `HBDYUFSC`)                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `trackedPetId`    | text    | yes      |         | ID of the pet ("trackable object"), linked to this tracker                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `refreshInterval` | integer | no       | 180     | REST polling interval in seconds, backstopping `position`, `hardware`'s battery level, `health`/`dog`, and — when it is linked — `device-info#battery-save-mode` (which also refreshes the Thing properties), alongside the real-time channel; set to 0 to disable and rely solely on real-time channel updates. `tracker-status`, the rest of `device-info`, and `profile` are never on this schedule — see their own sections below. Low values at your own risk¹ |
 
 Both `trackerId` and `trackedPetId` are filled in automatically when the Thing is created via discovery.
 
@@ -121,15 +121,13 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 
 | Channel ID                          | Type     | R/W | Advanced | Description                                                                                                                |
 | ----------------------------------- | -------- | --- | -------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `device-info#model-number`          | String   | R   | Yes      | Tractive hardware model code (e.g. `TG6C`)                                                                                 |
-| `device-info#hw-edition`            | String   | R   | Yes      | Hardware color/edition variant of the physical unit (e.g. `BROWN-LINES`)                                                   |
-| `device-info#firmware-version`      | String   | R   | Yes      | Onboard firmware version string; changes across OTA firmware updates                                                       |
-| `device-info#geofence-sensitivity`  | String   | R   | Yes      | Configured geofence entry/exit detection sensitivity (e.g. `HIGH`)                                                         |
 | `device-info#battery-save-mode`     | Switch   | RW  | No       | Aggressive battery-save mode toggle. Cloud-side account setting — takes effect within ~30 s regardless of tracker dormancy |
 | `device-info#subscription-status`   | String   | R   | Yes      | Status of the Tractive subscription covering this tracker (e.g. `ACTIVE`)                                                  |
 | `device-info#subscription-valid-to` | DateTime | R   | Yes      | Date the subscription covering this tracker is paid through                                                                |
 
-> **Note:** This data has no real-time channel equivalent and — apart from `battery-save-mode` — doesn't change during normal operation, so it's fetched once at Thing setup and never on the recurring poll schedule; refresh it on demand via the `refreshHardware()` action or a `REFRESH` command. Commanding `battery-save-mode` updates its channel from the write's response, but a change made in the Tractive app is only picked up on the next `refreshHardware()` / `REFRESH` / Thing restart.
+The tracker's model code, hardware edition, firmware version, and geofence sensitivity are exposed as Thing [properties](#properties), not channels.
+
+> **Note:** `battery-save-mode` is polled on the `refreshInterval` schedule whenever it is linked; the `tracker/{trackerId}` call it needs also refreshes the Thing [properties](#properties) as a side effect. It is otherwise fetched once at Thing setup and on demand via the `refreshHardware()` action or a `REFRESH` command. Commanding `battery-save-mode` updates its channel from the write's response. With `refreshInterval` set to `0` there is no periodic poll, so a change made in the Tractive app is then only picked up on the next `refreshHardware()` / `REFRESH` / Thing restart.
 >
 > **Subscription:** A non-`ACTIVE` subscription silently disables commands, live tracking, and real-time updates. The bridge fetches this once at startup and once a day, logs a WARN for any tracker whose subscription isn't active (so you get the warning even without linking the channels), and pushes each tracker's status to its Thing — the two channels update from that, not from `refreshHardware()`.
 
@@ -198,46 +196,78 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 
 ### Group `profile`
 
-| Channel ID                     | Type          | R/W | Advanced | Description                                                                        |
-| ------------------------------ | ------------- | --- | -------- | ---------------------------------------------------------------------------------- |
-| `profile#breed-ids`            | String        | R   | Yes      | Comma-separated Tractive breed-catalog ID(s)                                       |
-| `profile#gender`               | String        | R   | Yes      | The pet's sex (`M`/`F`)                                                            |
-| `profile#birthday`             | DateTime      | R   | Yes      | The pet's date of birth                                                            |
-| `profile#height`               | Number:Length | R   | Yes      | The pet's height                                                                   |
-| `profile#weight`               | Number:Mass   | R   | Yes      | The pet's weight                                                                   |
-| `profile#neutered`             | Switch        | R   | Yes      | Whether the pet is spayed/neutered                                                 |
-| `profile#home-location`        | Location      | R   | Yes      | The pet's configured home location                                                 |
-| `profile#last-updated`         | DateTime      | R   | Yes      | When this group was last fetched                                                   |
-| `profile#leaderboard-opt-out`  | Switch        | R   | Yes      | Whether the owner opted this pet out of Tractive's leaderboard/community feature   |
-| `profile#read-only`            | Switch        | R   | Yes      | Whether the authenticated account only has shared/invited-level access to this pet |
-| `profile#created-at`           | DateTime      | R   | Yes      | When this pet profile was first created in Tractive                                |
-| `profile#pet-type`             | String        | R   | Yes      | The pet's species (e.g. `DOG`)                                                     |
-| `profile#chip-id`              | String        | R   | Yes      | The pet's microchip ID, if entered in the app                                      |
-| `profile#lim`                  | Number:Length | R   | Yes      | Leg Index Measurement (FBMI input) — only populated for cats                       |
-| `profile#ribcage`              | Number:Length | R   | Yes      | Ribcage circumference (FBMI input) — only populated for cats                       |
-| `profile#instagram-username`   | String        | R   | Yes      | The pet's linked Instagram handle, if set                                          |
-| `profile#weight-is-default`    | Switch        | R   | Yes      | Whether `profile#weight` is a real value or a breed-average default                |
-| `profile#height-is-default`    | Switch        | R   | Yes      | Whether `profile#height` is a real value or a breed-average default                |
-| `profile#profile-picture-id`   | String        | R   | Yes      | ID of the pet's profile photo asset                                                |
-| `profile#gallery-picture-ids`  | String        | R   | Yes      | Comma-separated IDs of the pet's gallery photo assets                              |
-| `profile#walk-sharing-consent` | Switch        | R   | Yes      | Whether the owner consented to sharing this pet's walk data                        |
+| Channel ID              | Type          | R/W | Advanced | Description                        |
+| ----------------------- | ------------- | --- | -------- | ---------------------------------- |
+| `profile#height`        | Number:Length | RW  | Yes      | The pet's height                   |
+| `profile#weight`        | Number:Mass   | RW  | Yes      | The pet's weight                   |
+| `profile#home-location` | Location      | R   | Yes      | The pet's configured home location |
+| `profile#last-updated`  | DateTime      | R   | Yes      | When this group was last fetched   |
+
+The rest of this group's data — breed, sex, birthday, neutered status, account access level, microchip ID, and more — is exposed as Thing [properties](#properties), not channels.
 
 > **Note:** This group holds mostly-static pet-profile data from the Tractive app (breed, birthday, weight, etc.).
-> It is **not** part of the timed polling schedule (`refreshInterval`) — it's populated once when the Thing is created, and after that only updates when something explicitly asks for it: the `refreshProfile()` action, or a `REFRESH` command sent to any channel on this Thing (e.g. clicking refresh in the UI).
+> Neither the channels above nor the properties are part of the timed polling schedule (`refreshInterval`) — they're populated once when the Thing is created, and after that only update when something explicitly asks for it: the `refreshProfile()` action, or a `REFRESH` command sent to any channel on this Thing (e.g. clicking refresh in the UI).
 > If you edit this data in the Tractive app, values here stay stale until one of those happens.
+>
+> **`height`/`weight` are writable, but only for the pet's owner account.** Tractive's API itself enforces this —
+> sending a command from a shared/invited account is rejected server-side and logged as a WARN; nothing is sent
+> at all if the binding already knows the account is read-only (the same status the `petReadOnly` property
+> reflects). A successful write updates the channel immediately; it does not update `profile#last-updated` or
+> any other field in this group — those still only refresh via `refreshProfile()`/`REFRESH`/Thing restart.
+
+## Properties
+
+The `dog-6` Thing exposes these read-only properties, shown on the Thing's page in the UI. Discovery also sets `trackerId` and `trackedPetId`.
+
+| Property                 | Description                                                                                                                                                                         |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `modelId`                | Tractive hardware model code (e.g. `TG6C`)                                                                                                                                          |
+| `hardwareEdition`        | Hardware color/edition variant of the physical unit (e.g. `BROWN-LINES`)                                                                                                            |
+| `firmwareVersion`        | Onboard firmware version string; changes across OTA firmware updates                                                                                                                |
+| `geofenceSensitivity`    | Configured geofence entry/exit detection sensitivity (e.g. `HIGH`)                                                                                                                  |
+| `capabilities`           | Comma-separated onboard hardware/firmware capability flags (e.g. `LED,BUZZER,ACTIVITY_TRACKING`)                                                                                    |
+| `supportedGeofenceTypes` | Comma-separated geofence shapes this tracker+app combination supports (e.g. `CIRCLE,RECTANGLE,POLYGON`)                                                                             |
+| `selfTestAvailable`      | Whether the tracker offers a self-diagnostic test feature via the app                                                                                                               |
+| `macAddress`             | The tracker's Bluetooth MAC address, if ever reported (`null` in every capture so far)                                                                                              |
+| `trackerReadOnly`        | Whether the authenticated account only has shared/invited-level access to this tracker (distinct from `petReadOnly` below, the same kind of permission on the pet, not the tracker) |
+| `trackerReadOnlySince`   | When `trackerReadOnly` was set to its current value                                                                                                                                 |
+
+These come from `tracker/{trackerId}`: seeded at Thing setup, and refreshed on the same poll that keeps `device-info#battery-save-mode` current (so they also track `refreshInterval` while that channel is linked) as well as on the `refreshHardware()` action.
+
+The `dog-6` Thing also exposes these pet-profile properties, from `trackable_object/{petId}` — populated once at Thing setup and refreshed only via the `refreshProfile()` action or a `REFRESH` command, same as `profile#height`/`weight`/`home-location`/`last-updated`:
+
+| Property             | Description                                                                                                                                                                         |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `breedIds`           | Comma-separated Tractive breed-catalog ID(s); not human-readable breed names                                                                                                        |
+| `gender`             | The pet's sex (`M`/`F`)                                                                                                                                                             |
+| `birthday`           | The pet's date of birth                                                                                                                                                             |
+| `neutered`           | Whether the pet is spayed/neutered                                                                                                                                                  |
+| `leaderboardOptOut`  | Whether the owner opted this pet out of Tractive's leaderboard/community feature                                                                                                    |
+| `petReadOnly`        | Whether the authenticated account only has shared/invited-level access to this pet (distinct from `trackerReadOnly` above, the same kind of permission on the tracker, not the pet) |
+| `profileCreatedAt`   | When this pet profile was first created in Tractive                                                                                                                                 |
+| `petType`            | The pet's species (e.g. `DOG`)                                                                                                                                                      |
+| `chipId`             | The pet's microchip ID, if entered in the app                                                                                                                                       |
+| `lim`                | Leg Index Measurement, a Feline Body Mass Index input — only populated for cats                                                                                                     |
+| `ribcage`            | Ribcage circumference, the other FBMI input — only populated for cats                                                                                                               |
+| `instagramUsername`  | The pet's linked Instagram handle, if set                                                                                                                                           |
+| `weightIsDefault`    | Whether `profile#weight` is a real value or a breed-average default                                                                                                                 |
+| `heightIsDefault`    | Whether `profile#height` is a real value or a breed-average default                                                                                                                 |
+| `profilePictureId`   | ID of the pet's profile photo asset                                                                                                                                                 |
+| `galleryPictureIds`  | Comma-separated IDs of the pet's gallery photo assets                                                                                                                               |
+| `walkSharingConsent` | Whether the owner consented to sharing this pet's walk data                                                                                                                         |
 
 ## Thing Actions
 
 The `dog-6` Thing exposes six actions for use in rules:
 
-| Action                                                   | Description                                                                                                                                                                                                                                                                                                                     |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `refreshPosition()`                                      | Triggers an immediate refresh of the "Position" channel group, outside the regular polling schedule                                                                                                                                                                                                                             |
-| `refreshHealthOverview()`                                | Triggers an immediate refresh of the "Health" and "Dog" channel groups, outside the regular polling schedule                                                                                                                                                                                                                    |
-| `refreshHardware()`                                      | Triggers an immediate refresh of the "Device Info" channel group and "Hardware"'s battery level, outside the regular polling schedule. Also re-polls "Tracker Status", but that group only actually updates as a result if this happens to be the very first successful call ever — see the `tracker-status` group's note above |
-| `refreshProfile()`                                       | Triggers an immediate refresh of the "Profile" channel group — unlike the others, this group is otherwise never refreshed automatically                                                                                                                                                                                         |
-| `getPositions(ZonedDateTime from, ZonedDateTime to)`     | Fetches historical tracker positions within a time window                                                                                                                                                                                                                                                                       |
-| `getHealthHistory(ZonedDateTime from, ZonedDateTime to)` | Fetches per-day activity and sleep history within a date window                                                                                                                                                                                                                                                                 |
+| Action                                                   | Description                                                                                                                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshPosition()`                                      | Triggers an immediate refresh of the "Position" channel group, outside the regular polling schedule                                                                                                                                                                                                                                                              |
+| `refreshHealthOverview()`                                | Triggers an immediate refresh of the "Health" and "Dog" channel groups, outside the regular polling schedule                                                                                                                                                                                                                                                     |
+| `refreshHardware()`                                      | Re-polls `tracker/{trackerId}`, refreshing `device-info#battery-save-mode` and the Thing properties outside the regular schedule. Mainly for `refreshInterval = 0` setups, or to pick up a battery-save-mode change made in the Tractive app without waiting. "Tracker Status" only updates on the very first successful call ever — see that group's note above |
+| `refreshProfile()`                                       | Triggers an immediate refresh of the "Profile" channel group — unlike the others, this group is otherwise never refreshed automatically                                                                                                                                                                                                                          |
+| `getPositions(ZonedDateTime from, ZonedDateTime to)`     | Fetches historical tracker positions within a time window                                                                                                                                                                                                                                                                                                        |
+| `getHealthHistory(ZonedDateTime from, ZonedDateTime to)` | Fetches per-day activity and sleep history within a date window                                                                                                                                                                                                                                                                                                  |
 
 > **Note:** The binding has a safety against polling too frequently.
 > If the same action is called within 60 seconds of the previous (or less, if you set `refreshInterval` to less than 60), the cached data from the previous call are rused.
@@ -316,10 +346,6 @@ String        samson_ZoneId                "Samson Zone ID"                     
 DateTime      samson_ZoneEnteredAt         "Samson Zone Entered At"                  ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:tracker-status#zone-entered-at" }
 DateTime      samson_ZoneLastSeenAt        "Samson Zone Last Seen At"                ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:tracker-status#zone-last-seen-at" }
 String        samson_PowerSavingZoneId     "Samson Power Saving Zone ID"             ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#power-saving-zone-id" }
-String        samson_ModelNumber           "Samson Model Number"                     ["Point"]                       { channel="tractive:dog-6:gert:samson:device-info#model-number" }
-String        samson_HwEdition             "Samson Hardware Edition"                 ["Point"]                       { channel="tractive:dog-6:gert:samson:device-info#hw-edition" }
-String        samson_FirmwareVersion       "Samson Firmware Version"                 ["Point"]                       { channel="tractive:dog-6:gert:samson:device-info#firmware-version" }
-String        samson_GeofenceSensitivity   "Samson Geofence Sensitivity"             ["Point"]                       { channel="tractive:dog-6:gert:samson:device-info#geofence-sensitivity" }
 String        samson_SubscriptionStatus    "Samson Subscription Status"              ["Point"]                       { channel="tractive:dog-6:gert:samson:device-info#subscription-status" }
 DateTime      samson_SubscriptionValidTo   "Samson Subscription Valid To"            ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:device-info#subscription-valid-to" }
 Switch        samson_BatterySaveMode       "Samson Battery Save Mode"                ["Switch"]                      { channel="tractive:dog-6:gert:samson:device-info#battery-save-mode" }
@@ -356,27 +382,10 @@ DateTime      samson_SeparationStartedAt   "Samson Separation Phase Started At" 
 String        samson_Bark                  "Samson Bark Status"                      ["Point"]                       { channel="tractive:dog-6:gert:samson:dog#bark" }
 Number        samson_BarkDayOffset         "Samson Bark Day Offset"                  ["Point"]                       { channel="tractive:dog-6:gert:samson:dog#bark-day-offset" }
 
-String        samson_BreedIds              "Samson Breed IDs"                        ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#breed-ids" }
-String        samson_Gender                "Samson Gender"                           ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#gender" }
-DateTime      samson_Birthday              "Samson Birthday"                         ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:profile#birthday" }
 Number:Length samson_Height                "Samson Height"                           ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#height" }
 Number:Mass   samson_Weight                "Samson Weight"                           ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#weight", unit="kg", stateDescription=""[pattern="%.1f %unit%"] }
-Switch        samson_Neutered              "Samson Neutered"                         ["Status"]                      { channel="tractive:dog-6:gert:samson:profile#neutered" }
 Location      samson_HomeLocation          "Samson Home Location"                    ["GeoLocation", "Measurement"]  { channel="tractive:dog-6:gert:samson:profile#home-location" }
 DateTime      samson_ProfileLastUpdated    "Samson Profile Last Updated"             ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:profile#last-updated" }
-Switch        samson_LeaderboardOptOut     "Samson Leaderboard Opt-Out"              ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#leaderboard-opt-out" }
-Switch        samson_ReadOnly              "Samson Read Only"                        ["Status"]                      { channel="tractive:dog-6:gert:samson:profile#read-only" }
-DateTime      samson_ProfileCreatedAt      "Samson Profile Created At"               ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:profile#created-at" }
-String        samson_PetType               "Samson Pet Type"                         ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#pet-type" }
-String        samson_ChipId                "Samson Microchip ID"                     ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#chip-id" }
-Number:Length samson_Lim                   "Samson LIM"                              ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#lim" }
-Number:Length samson_Ribcage               "Samson Ribcage Circumference"            ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#ribcage" }
-String        samson_InstagramUsername     "Samson Instagram Username"               ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#instagram-username" }
-Switch        samson_WeightIsDefault       "Samson Weight Is Default"                ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#weight-is-default" }
-Switch        samson_HeightIsDefault       "Samson Height Is Default"                ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#height-is-default" }
-String        samson_ProfilePictureId      "Samson Profile Picture ID"               ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#profile-picture-id" }
-String        samson_GalleryPictureIds     "Samson Gallery Picture IDs"              ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#gallery-picture-ids" }
-Switch        samson_WalkSharingConsent    "Samson Walk Sharing Consent"             ["Point"]                       { channel="tractive:dog-6:gert:samson:profile#walk-sharing-consent" }
 ```
 
 ### `tractive.rules`

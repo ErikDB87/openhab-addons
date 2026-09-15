@@ -45,13 +45,16 @@ public class TractiveHandlerFactory extends BaseThingHandlerFactory {
     private static final Set<ThingTypeUID> SUPPORTED_THING_TYPES_UIDS = Set.of(THING_TYPE_ACCOUNT, THING_TYPE_DOG6);
 
     private final HttpClient httpClient;
+    private final TractiveStateDescriptionProvider stateDescriptionProvider;
 
     /**
      * Creates the handler factory, retrieving the shared openHAB HTTP client via OSGi.
      */
     @Activate
-    public TractiveHandlerFactory(@Reference HttpClientFactory httpClientFactory) {
+    public TractiveHandlerFactory(@Reference HttpClientFactory httpClientFactory,
+            @Reference TractiveStateDescriptionProvider stateDescriptionProvider) {
         this.httpClient = httpClientFactory.getCommonHttpClient();
+        this.stateDescriptionProvider = stateDescriptionProvider;
     }
 
     @Override
@@ -67,7 +70,7 @@ public class TractiveHandlerFactory extends BaseThingHandlerFactory {
             return new TractiveAccountHandler((Bridge) thing, httpClient);
         }
         if (THING_TYPE_DOG6.equals(thingTypeUID)) {
-            return new TractiveDog6Handler(thing);
+            return new TractiveDog6Handler(thing, stateDescriptionProvider);
         }
 
         return null;
