@@ -16,6 +16,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -39,6 +40,8 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.channel.TractiveChannelAuthException;
+import org.openhab.binding.tractive.internal.channel.TractiveChannelListener;
 import org.openhab.binding.tractive.internal.channel.TractiveEventListener;
 import org.openhab.binding.tractive.internal.config.TractiveAccountConfiguration;
 import org.openhab.core.config.core.Configuration;
@@ -58,14 +61,16 @@ import com.google.gson.JsonObject;
  * reflection-mocked {@code scheduler}, same pattern as {@link TractiveTrackerHandlerPollGatingTest}), the private
  * {@code checkAndRefreshToken()} (invoked directly via reflection, since it has no public entry point and doesn't
  * need the scheduler), and the public {@link TractiveAccountHandler#refreshToken}. Covers the three
- * {@code authenticate()} failure branches (a real {@code InterruptedException}, a Jetty {@code TimeoutException},
- * and {@code ExecutionException} -- see CLAUDE.md's "Checked-exception hierarchy" entry for why the first is
- * deliberately silent at every call site), a non-200 and a structurally-incomplete 200 response, the bridge auth
- * retry backoff doubling, and the thread-safe re-auth guard ({@code knownToken} mismatch is a silent no-op). Also
- * covers {@code handleTokenRefreshFailure()}'s tolerance logic: a transient {@code IOException} from
- * {@code checkAndRefreshToken()} / {@code refreshToken()} is retried silently and only escalates to
- * {@code OFFLINE}/{@code COMMUNICATION_ERROR} after {@code TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE} consecutive
- * failures, immediately when the token is within the expiry buffer, or immediately for a {@code RuntimeException}.
+ * {@code authenticate()} failure branches (a real {@code InterruptedException} -- deliberately silent at every
+ * call site, since it can only originate from this binding's own {@code dispose()} interrupting the thread, and
+ * updating status there risks a false-alarm WARN from a callback the framework may already have cleared; a Jetty
+ * {@code TimeoutException}; and {@code ExecutionException}), a non-200 and a structurally-incomplete 200
+ * response, the bridge auth retry backoff doubling, and the thread-safe re-auth guard ({@code knownToken}
+ * mismatch is a silent no-op). Also covers {@code handleTokenRefreshFailure()}'s tolerance logic: a transient
+ * {@code IOException} from {@code checkAndRefreshToken()} / {@code refreshToken()} is retried silently and only
+ * escalates to {@code OFFLINE}/{@code COMMUNICATION_ERROR} after {@code TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE}
+ * consecutive failures, immediately when the token is within the expiry buffer, or immediately for a
+ * {@code RuntimeException}.
  *
  * A second group covers {@link TractiveAccountHandler#checkSubscriptions} (private; invoked via reflection): it
  * fetches {@code user/widget-data} and, per tracker, caches the {@code subscription} object and pushes it to every
@@ -73,6 +78,13 @@ import com.google.gson.JsonObject;
  * on a transient HTTP error or an unexpected response shape.
  * {@link TractiveAccountHandler#registerListener} replays the cached subscription to a listener that registers
  * after the fetch.
+ *
+ * A third group covers the private {@code scheduleChannelConnect()} (invoked via reflection, with a mocked
+ * {@link TractiveChannelListener} standing in for a real channel connection): a
+ * {@link TractiveChannelAuthException} from the listener's {@code run()} triggers
+ * {@link TractiveAccountHandler#refreshToken} with the token snapshot captured before the call -- the same
+ * remedy as a REST-side 401/403 -- while reconnecting at the current backoff delay rather than resetting it; a
+ * plain {@code IOException} does not trigger a reauth at all, only the generic debug-and-backoff path.
  *
  * @author Erik De Boeck - Initial contribution
  */
@@ -138,6 +150,28 @@ class TractiveAccountHandlerTest {
     private void runInitialSchedule() {
         ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
         verify(mockScheduler).schedule(task.capture(), eq(0L), eq(TimeUnit.SECONDS));
+        task.getValue().run();
+    }
+
+    /**
+     * Invokes the private {@code scheduleChannelConnect(TractiveChannelListener, long)} directly, bypassing
+     * {@code startChannelLoop()} so a mock {@link TractiveChannelListener} can be substituted for a real channel
+     * connection.
+     */
+    private void invokeScheduleChannelConnect(TractiveChannelListener listener, long delaySeconds) throws Exception {
+        Method method = TractiveAccountHandler.class.getDeclaredMethod("scheduleChannelConnect",
+                TractiveChannelListener.class, long.class);
+        method.setAccessible(true);
+        method.invoke(handler, listener, delaySeconds);
+    }
+
+    /**
+     * Captures and runs the single {@code scheduler.schedule(..., delaySeconds, SECONDS)} call queued so far at
+     * that exact delay -- the channel-connect counterpart to {@link #runInitialSchedule()}.
+     */
+    private void runScheduledTaskAt(long delaySeconds) {
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), eq(delaySeconds), eq(TimeUnit.SECONDS));
         task.getValue().run();
     }
 
@@ -440,6 +474,48 @@ class TractiveAccountHandlerTest {
 
         verify(callback).statusUpdated(eq(bridgeThing),
                 argThat(info -> isOffline(info, ThingStatusDetail.COMMUNICATION_ERROR)));
+    }
+
+    // -- scheduleChannelConnect() (private; invoked via reflection) ------------------------------
+
+    @Test
+    void scheduleChannelConnectAuthExceptionTriggersReauthAndSchedulesReconnectAtCurrentBackoff() throws Exception {
+        setPrivateField("config", validConfig());
+        setPrivateField("accessToken", "stale-token");
+        setPrivateField("userId", "user123");
+        stubSuccessfulAuthResponse();
+        TractiveChannelListener listener = mock(TractiveChannelListener.class);
+        doThrow(new TractiveChannelAuthException("Channel connect failed with HTTP 403")).when(listener)
+                .run(any(HttpClient.class), anyString(), anyString());
+
+        invokeScheduleChannelConnect(listener, 0L);
+        runScheduledTaskAt(0L);
+
+        // The 403 handler re-authenticates with the still-valid stored credentials -- same remedy as a REST-side
+        // 401/403 -- instead of just retrying the channel connect with the same (presumably still-bad) token.
+        verify(httpClient, atLeastOnce()).newRequest(contains("auth/token"));
+        verify(callback).statusUpdated(eq(bridgeThing), argThat(info -> info.getStatus() == ThingStatus.ONLINE));
+        // Reconnects at the *current* backoff (15 s), not reset to it -- the field itself is doubled to 30 s for
+        // next time, same escalation shape as every other failure branch in this method.
+        verify(mockScheduler).schedule(any(Runnable.class), eq(15L), eq(TimeUnit.SECONDS));
+    }
+
+    @Test
+    void scheduleChannelConnectPlainIoExceptionDoesNotTriggerReauth() throws Exception {
+        setPrivateField("accessToken", "stale-token");
+        setPrivateField("userId", "user123");
+        TractiveChannelListener listener = mock(TractiveChannelListener.class);
+        doThrow(new IOException("Channel connect failed with HTTP 502")).when(listener).run(any(HttpClient.class),
+                anyString(), anyString());
+
+        invokeScheduleChannelConnect(listener, 0L);
+        runScheduledTaskAt(0L);
+
+        // A routine disconnect must never trigger a reauth attempt -- only the auth/token POST would show up
+        // here, confirming the TractiveChannelAuthException catch clause (not this generic one) is what's
+        // actually responsible for the reauth in the test above.
+        verify(httpClient, never()).newRequest(contains("auth/token"));
+        verify(mockScheduler).schedule(any(Runnable.class), eq(15L), eq(TimeUnit.SECONDS));
     }
 
     // -- checkSubscriptions() (private; invoked via reflection) + registerListener() replay -----

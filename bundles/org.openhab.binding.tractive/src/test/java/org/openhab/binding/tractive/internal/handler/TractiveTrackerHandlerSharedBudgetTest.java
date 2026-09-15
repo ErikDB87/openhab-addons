@@ -34,10 +34,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.util.PollGuard;
 import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.binding.tractive.internal.util.TractiveRetryUtil;
-import org.openhab.core.library.types.StringType;
+import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.ThingUID;
@@ -60,10 +61,10 @@ import org.openhab.core.thing.binding.ThingHandlerCallback;
  * {@code TractiveDog6HandlerJsonTest} for its mocked scheduler.
  *
  * Since {@code initialize()} is never called here either, {@code recurringPollEnabled} also defaults to
- * {@code false} -- which, since 2026-08-18, makes {@code tryConsumeSharedBudget} bypass the shared-budget gate
- * entirely (the "no recurring cycle to retry a skipped call on" treatment {@code sendCommand}/{@code
- * fetchPositions} already used). These tests are specifically about that gate, so {@code recurringPollEnabled}
- * is reflectively forced to {@code true} in {@link #setUp()} the same way, to restore the behavior under test.
+ * {@code false} -- which makes {@code tryConsumeSharedBudget} bypass the shared-budget gate entirely (the "no
+ * recurring cycle to retry a skipped call on" treatment {@code sendCommand}/{@code fetchPositions} already
+ * used). These tests are specifically about that gate, so {@code recurringPollEnabled} is reflectively forced to
+ * {@code true} in {@link #setUp()} the same way, to restore the behavior under test.
  *
  * @author Erik De Boeck - Initial contribution
  */
@@ -73,8 +74,8 @@ class TractiveTrackerHandlerSharedBudgetTest {
 
     private static final ThingUID THING_UID = new ThingUID(TractiveBindingConstants.THING_TYPE_DOG6, "Samson");
     private static final String SAMSON_TRACKER_ID = "HBDYUFSC";
-    private static final ChannelUID MODEL_NUMBER_CHANNEL_UID = new ChannelUID(THING_UID,
-            TractiveBindingConstants.CHANNEL_MODEL_NUMBER);
+    private static final ChannelUID BATTERY_SAVE_MODE_CHANNEL_UID = new ChannelUID(THING_UID,
+            TractiveBindingConstants.CHANNEL_BATTERY_SAVE_MODE);
 
     @Mock
     private @NonNullByDefault({}) Thing thing;
@@ -88,6 +89,7 @@ class TractiveTrackerHandlerSharedBudgetTest {
     private @NonNullByDefault({}) Request request;
     @Mock
     private @NonNullByDefault({}) ContentResponse response;
+    private final TractiveStateDescriptionProvider stateDescriptionProvider = new TractiveStateDescriptionProvider();
     private @NonNullByDefault({}) TractiveDog6Handler handler;
 
     @BeforeEach
@@ -101,9 +103,9 @@ class TractiveTrackerHandlerSharedBudgetTest {
         lenient().when(bridge.addAuthHeaders(request)).thenReturn(request);
         lenient().when(request.send()).thenReturn(response);
         lenient().when(response.getStatus()).thenReturn(HttpStatus.OK_200);
-        lenient().when(response.getContentAsString()).thenReturn("{\"model_number\":\"TG6C\"}");
+        lenient().when(response.getContentAsString()).thenReturn("{\"battery_save_mode\":true}");
 
-        handler = new TractiveDog6Handler(thing) {
+        handler = new TractiveDog6Handler(thing, stateDescriptionProvider) {
             {
                 trackerId = SAMSON_TRACKER_ID;
             }
@@ -133,7 +135,7 @@ class TractiveTrackerHandlerSharedBudgetTest {
         handler.pollTrackerDetails(bridge);
         handler.pollTrackerDetails(bridge);
 
-        verify(callback, times(2)).stateUpdated(eq(MODEL_NUMBER_CHANNEL_UID), eq(new StringType("TG6C")));
+        verify(callback, times(2)).stateUpdated(eq(BATTERY_SAVE_MODE_CHANNEL_UID), eq(OnOffType.ON));
     }
 
     @Test
@@ -145,7 +147,7 @@ class TractiveTrackerHandlerSharedBudgetTest {
         handler.pollTrackerDetails(bridge);
 
         verifyNoInteractions(httpClient);
-        verify(callback, never()).stateUpdated(eq(MODEL_NUMBER_CHANNEL_UID), any());
+        verify(callback, never()).stateUpdated(eq(BATTERY_SAVE_MODE_CHANNEL_UID), any());
     }
 
     /**

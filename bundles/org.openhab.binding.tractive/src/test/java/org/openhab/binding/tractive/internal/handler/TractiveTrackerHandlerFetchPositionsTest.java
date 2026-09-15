@@ -34,6 +34,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.thing.ChannelUID;
@@ -77,6 +78,7 @@ class TractiveTrackerHandlerFetchPositionsTest {
     private @NonNullByDefault({}) Request request;
     @Mock
     private @NonNullByDefault({}) ContentResponse response;
+    private final TractiveStateDescriptionProvider stateDescriptionProvider = new TractiveStateDescriptionProvider();
     private @NonNullByDefault({}) TractiveDog6Handler handler;
 
     @BeforeEach
@@ -91,7 +93,7 @@ class TractiveTrackerHandlerFetchPositionsTest {
         lenient().when(request.send()).thenReturn(response);
 
         TractiveAccountHandler br = bridge;
-        handler = new TractiveDog6Handler(thing) {
+        handler = new TractiveDog6Handler(thing, stateDescriptionProvider) {
             {
                 trackerId = SAMSON_TRACKER_ID;
             }
@@ -123,7 +125,7 @@ class TractiveTrackerHandlerFetchPositionsTest {
 
     @Test
     void fetchPositionsNoBridgeReturnsNullWithoutHttpCall() throws Exception {
-        TractiveDog6Handler noBridgeHandler = new TractiveDog6Handler(thing) {
+        TractiveDog6Handler noBridgeHandler = new TractiveDog6Handler(thing, stateDescriptionProvider) {
             {
                 trackerId = SAMSON_TRACKER_ID;
             }

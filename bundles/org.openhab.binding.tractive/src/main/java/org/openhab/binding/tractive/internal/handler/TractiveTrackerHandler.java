@@ -19,6 +19,7 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeParseException;
+import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +38,7 @@ import org.eclipse.jetty.client.api.Request;
 import org.eclipse.jetty.client.util.StringContentProvider;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.channel.TractiveEventListener;
 import org.openhab.binding.tractive.internal.config.TractiveTrackerConfiguration;
 import org.openhab.binding.tractive.internal.util.PollGuard;
@@ -126,11 +128,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     private static final String[] POSITION_GROUP_CHANNEL_IDS = { CHANNEL_LOCATION, CHANNEL_LAST_POSITION_TIME,
             CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY };
 
+    protected final TractiveStateDescriptionProvider stateDescriptionProvider;
+
     /**
      * Creates a new tracker handler for the given thing.
      */
-    protected TractiveTrackerHandler(Thing thing) {
+    protected TractiveTrackerHandler(Thing thing, TractiveStateDescriptionProvider stateDescriptionProvider) {
         super(thing);
+        this.stateDescriptionProvider = stateDescriptionProvider;
     }
 
     @Override
@@ -233,7 +238,6 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         taskTracker.track(scheduler.schedule(() -> {
             try {
                 if (bridge.getAccessToken() != null) {
-                    pollTrackerDetails(bridge);
                     pollAll();
                     pollProfile(bridge);
                     updateStatus(ThingStatus.ONLINE);
@@ -257,13 +261,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             taskTracker.track(scheduler.schedule(() -> {
                 try {
                     pollAll();
-                    if (bridge != null) {
-                        if (trackerDetailsGuard.getCached() == null) {
-                            pollTrackerDetails(bridge);
-                        }
-                        if (profileGuard.getCached() == null) {
-                            pollProfile(bridge);
-                        }
+                    if (bridge != null && profileGuard.getCached() == null) {
+                        pollProfile(bridge);
                     }
                     updateStatus(ThingStatus.ONLINE);
                 } catch (RuntimeException e) {
@@ -495,6 +494,92 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
+     * Sets the pet's height. Commanded value must already be a valid {@code QuantityType} convertible to metres
+     * -- {@link org.openhab.binding.tractive.internal.handler.TractiveDog6Handler#handleCommand} does that
+     * conversion before calling this, so a failed conversion never reaches here.
+     */
+    protected void setHeight(HttpClient httpClient, TractiveAccountHandler bridge, QuantityType<?> metres) {
+        setPetDetailField(httpClient, bridge, FIELD_HEIGHT, metres, CHANNEL_HEIGHT);
+    }
+
+    /**
+     * Sets the pet's weight. Commanded value must already be a valid {@code QuantityType} convertible to grams --
+     * see {@link #setHeight} for why the conversion happens before this is called, not inside it.
+     */
+    protected void setWeight(HttpClient httpClient, TractiveAccountHandler bridge, QuantityType<?> grams) {
+        setPetDetailField(httpClient, bridge, FIELD_WEIGHT, grams, CHANNEL_WEIGHT);
+    }
+
+    /**
+     * Writes a single {@code pet_detail} field. Checks the account's own {@code petReadOnly} property first: the
+     * matching channel is also marked read-only per-account via {@link TractiveStateDescriptionProvider} (see
+     * {@link #applyProfile}), but that state-description flag is a UI hint only -- openHAB core does not enforce
+     * it when dispatching a command, so a rule, the REST API, or a stale UI page could still reach this method.
+     * This property check is the actual gate, failing fast with no HTTP call instead of letting the request go
+     * out and bounce off Tractive's own account-ownership check.
+     *
+     * Otherwise fetches a fresh {@code trackable_object/{trackedPetId}} (needed for both the {@code pet_detail}
+     * resource's own id -- distinct from {@code trackedPetId} -- and a fresh {@code _version}, required and
+     * enforced by the server), then {@code PUT pet_detail/{id}} with all eleven {@link #PET_DETAIL_WRITE_FIELDS}
+     * copied verbatim from that fresh read except the one field actually changing. Sends the full body rather
+     * than a minimal one containing only the changed field: omitting a field has been observed to leave it
+     * unchanged rather than nulling it, but Tractive's API is undocumented and unversioned, so that behaviour
+     * might change. The read-then-write already needs the fresh {@code _version} from the same GET regardless,
+     * so sending the other ten fields back unchanged costs nothing extra. Both HTTP calls draw on
+     * {@link TractiveAccountHandler#getGraphApiRateLimitBucket()}; {@code trackable_object}/{@code pet_detail}
+     * share that same account-wide bucket with {@code tracker}/{@code device_hw_report}/{@code device_pos_report}.
+     * A stale {@code _version} (someone else changed the pet's profile in between) surfaces as a plain WARN with
+     * the server's own HTTP 400/code 7002 body -- deliberately not auto-retried, a rare race on a single-account
+     * resource. On success, the channel is updated directly to the commanded value without a follow-up read: the
+     * PUT response body is minimal ({@code _id}/{@code _type}/{@code _version} only) and never carries the
+     * field's new value, so there is nothing worth parsing out of it. The {@code 200} status alone is trusted as
+     * sufficient -- the one real failure mode, a stale {@code _version}, already surfaces loudly as its own
+     * {@code 400}/{@code 7002} above rather than silently applying the wrong value.
+     */
+    private void setPetDetailField(HttpClient httpClient, TractiveAccountHandler bridge, String fieldName,
+            QuantityType<?> value, String channelId) {
+        if ("true".equalsIgnoreCase(thing.getProperties().get(PROPERTY_PET_READ_ONLY))) {
+            logger.warn("Not writing {}: this account only has shared/read-only access to this pet", channelId);
+            return;
+        }
+
+        SharedRateLimitBucket graphBucket = bridge.getGraphApiRateLimitBucket();
+        boolean tokenWasAvailableForGet = graphBucket.tryConsume();
+        JsonObject profile = getJson(bridge, API_BASE_URL + "trackable_object/" + trackedPetId,
+                tokenWasAvailableForGet ? graphBucket : null);
+        JsonObject details = (profile != null && profile.has(FIELD_DETAILS)
+                && profile.get(FIELD_DETAILS).isJsonObject()) ? profile.get(FIELD_DETAILS).getAsJsonObject() : null;
+        if (details == null || !details.has(FIELD_ID) || !details.has(FIELD_VERSION)) {
+            logger.warn("Could not fetch a fresh pet_detail id/_version -- {} not written", channelId);
+            return;
+        }
+
+        JsonObject body = new JsonObject();
+        for (String key : PET_DETAIL_WRITE_FIELDS) {
+            if (details.has(key)) {
+                body.add(key, details.get(key));
+            }
+        }
+        body.addProperty(fieldName, value.doubleValue());
+        body.addProperty(FIELD_VERSION, details.get(FIELD_VERSION).getAsString());
+
+        String petDetailId = details.get(FIELD_ID).getAsString();
+        boolean tokenWasAvailableForPut = graphBucket.tryConsume();
+        ContentResponse response = sendWithReauth(bridge, httpClient, API_BASE_URL + "pet_detail/" + petDetailId,
+                HttpMethod.PUT, gson.toJson(body), "Set " + channelId, tokenWasAvailableForPut ? graphBucket : null);
+        if (response == null) {
+            logger.warn("Set {} could not be completed", channelId);
+            return;
+        }
+        if (response.getStatus() != HttpStatus.OK_200) {
+            logger.warn("Set {} returned HTTP {}: {}", channelId, response.getStatus(), response.getContentAsString());
+            return;
+        }
+        bumpLastContact();
+        updateState(channelId, value);
+    }
+
+    /**
      * Triggers an immediate health overview refresh outside the polling schedule.
      * Intended to be called from the tracker model's {@code ThingActions} implementation (e.g.
      * {@link org.openhab.binding.tractive.internal.action.TractiveDog6Actions} for the Dog 6).
@@ -520,7 +605,6 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         TractiveAccountHandler bridge = getAccountHandler();
         if (bridge != null) {
             pollTrackerDetails(bridge);
-            pollHwReport(bridge);
         }
     }
 
@@ -594,28 +678,22 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Polls the three REST endpoints that stay on the recurring schedule (Tracker Status/Device Info, via
-     * {@link #pollTrackerDetails}, don't -- see the note on {@link #applyTrackerDetails} for why) and updates the
-     * corresponding channels.
+     * Polls the REST endpoints that stay on the recurring schedule and updates the corresponding channels.
+     * {@link #pollTrackerDetails} is included for {@code device-info#battery-save-mode} -- a mutable setting with
+     * no real-time channel counterpart -- but skips its own HTTP call when nothing it could write is linked, and
+     * the Tracker Status fields it also reads stay seed-once (see {@link #applyTrackerDetails}). The rest of
+     * Device Info, and Profile, are still off this schedule -- see {@link #applyTrackerDetails} and
+     * {@link #pollProfile}.
      */
     protected void pollAll() {
         TractiveAccountHandler bridge = getAccountHandler();
         if (bridge == null || bridge.getThing().getStatus() != ThingStatus.ONLINE) {
             return;
         }
+        pollTrackerDetails(bridge);
         pollHwReport(bridge);
         pollPositionReport(bridge);
         pollHealthOverview(bridge);
-    }
-
-    /**
-     * Polls tracker details; resolves the bridge internally.
-     */
-    protected void pollTrackerDetails() {
-        TractiveAccountHandler bridge = getAccountHandler();
-        if (bridge != null && bridge.getThing().getStatus() == ThingStatus.ONLINE) {
-            pollTrackerDetails(bridge);
-        }
     }
 
     /**
@@ -666,7 +744,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * response is already in flight, so the cache is left untouched.
      */
     protected void pollTrackerDetails(TractiveAccountHandler bridge) {
-        if (!isAnyHardwareOrDeviceInfoChannelLinked()) {
+        if (!isAnyTrackerDetailsChannelLinked() && trackerDetailsGuard.getCached() != null) {
             return;
         }
         PollGuard.AcquireResult result = trackerDetailsGuard.tryAcquire();
@@ -701,19 +779,17 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Applies a {@code tracker/{trackerId}} payload to the Hardware channel group. The Tracker Status fields below
-     * are only ever written once, on the very first successful call -- checked via {@link
-     * #trackerDetailsGuard}{@code .getCached()} being {@code null} rather than a dedicated field, since the guard
-     * already distinguishes "never succeeded" from "succeeded at least once." That only works because the caller
-     * applies before caching, so this check still sees the pre-this-call state. {@code battery-save-mode} (via
-     * {@link #applyBatterySaveMode}) is the exception: it is mutable, has no real-time channel counterpart, and is
-     * written on every call, above the seed-once gate.
+     * Applies a {@code tracker/{trackerId}} payload. The descriptive fields ({@code model_number},
+     * {@code hw_edition}, {@code fw_version}, {@code geofence_sensitivity}) become Thing properties, not Channels
+     * -- see {@link #applyDeviceInfoProperties}. {@code battery-save-mode} (via {@link #applyBatterySaveMode}) is a
+     * mutable Channel written on every call. The Tracker Status fields below are only ever written once, on the
+     * very first successful call -- checked via {@link #trackerDetailsGuard}{@code .getCached()} being {@code null}
+     * rather than a dedicated field, since the guard already distinguishes "never succeeded" from "succeeded at
+     * least once." That only works because the caller applies before caching, so this check still sees the
+     * pre-this-call state.
      */
     private void applyTrackerDetails(JsonObject json) {
-        updateStringChannel(CHANNEL_MODEL_NUMBER, json, FIELD_MODEL_NUMBER);
-        updateStringChannel(CHANNEL_HW_EDITION, json, FIELD_HW_EDITION);
-        updateStringChannel(CHANNEL_FIRMWARE_VERSION, json, FIELD_FW_VERSION);
-        updateStringChannel(CHANNEL_GEOFENCE_SENSITIVITY, json, FIELD_GEOFENCE_SENSITIVITY);
+        applyDeviceInfoProperties(json);
         updatePowerSavingFlag(json, FIELD_STATE_REASON);
         applyBatterySaveMode(json);
 
@@ -733,17 +809,72 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Whether anything {@link #pollTrackerDetails} could write is actually linked -- skips the whole REST call when
-     * nothing is, mirroring the same-purpose check in
-     * {@link #pollHwReport}/{@link #pollPositionReport}/{@link #pollHealthOverview}.
+     * Whether any channel {@link #pollTrackerDetails} still writes -- {@code battery-save-mode} or one of the
+     * seed-once Tracker Status channels -- is linked. Once the first poll has seeded the Thing properties and
+     * Tracker Status, later polls skip the whole REST call unless this is true, mirroring the same-purpose check
+     * in {@link #pollHwReport}/{@link #pollPositionReport}/{@link #pollHealthOverview}.
      */
-    private boolean isAnyHardwareOrDeviceInfoChannelLinked() {
-        return isLinked(CHANNEL_MODEL_NUMBER) || isLinked(CHANNEL_HW_EDITION) || isLinked(CHANNEL_FIRMWARE_VERSION)
-                || isLinked(CHANNEL_GEOFENCE_SENSITIVITY) || isLinked(CHANNEL_BATTERY_SAVE_MODE)
-                || isLinked(CHANNEL_TRACKER_STATE) || isLinked(CHANNEL_CHARGING_STATE)
-                || isLinked(CHANNEL_BATTERY_STATE) || isLinked(CHANNEL_TRACKER_STATE_REASON)
-                || isLinked(CHANNEL_ZONE_ID) || isLinked(CHANNEL_ZONE_TYPE) || isLinked(CHANNEL_ZONE_ENTERED_AT)
-                || isLinked(CHANNEL_ZONE_LAST_SEEN_AT) || isLinked(CHANNEL_POWER_SAVING_ZONE_ID);
+    private boolean isAnyTrackerDetailsChannelLinked() {
+        return isLinked(CHANNEL_BATTERY_SAVE_MODE) || isLinked(CHANNEL_TRACKER_STATE)
+                || isLinked(CHANNEL_CHARGING_STATE) || isLinked(CHANNEL_BATTERY_STATE)
+                || isLinked(CHANNEL_TRACKER_STATE_REASON) || isLinked(CHANNEL_ZONE_ID) || isLinked(CHANNEL_ZONE_TYPE)
+                || isLinked(CHANNEL_ZONE_ENTERED_AT) || isLinked(CHANNEL_ZONE_LAST_SEEN_AT)
+                || isLinked(CHANNEL_POWER_SAVING_ZONE_ID);
+    }
+
+    /**
+     * Applies the descriptive {@code tracker/{trackerId}} fields as Thing properties rather than channels: they
+     * describe the hardware/account relationship, change at most across an OTA firmware update or an ownership
+     * transfer, and carry no rule or charting value. {@link #updateProperties} informs the framework only when a
+     * value actually changed, so running this on every {@code tracker/{trackerId}} poll is cheap and still picks
+     * up a firmware bump (or similar) on its own.
+     */
+    private void applyDeviceInfoProperties(JsonObject json) {
+        Map<String, String> props = new HashMap<>();
+        putStringProperty(props, Thing.PROPERTY_MODEL_ID, json, FIELD_MODEL_NUMBER);
+        putStringProperty(props, PROPERTY_HARDWARE_EDITION, json, FIELD_HW_EDITION);
+        putStringProperty(props, Thing.PROPERTY_FIRMWARE_VERSION, json, FIELD_FW_VERSION);
+        putStringProperty(props, PROPERTY_GEOFENCE_SENSITIVITY, json, FIELD_GEOFENCE_SENSITIVITY);
+        putJoinedArrayProperty(props, PROPERTY_CAPABILITIES, json, FIELD_CAPABILITIES);
+        putJoinedArrayProperty(props, PROPERTY_SUPPORTED_GEOFENCE_TYPES, json, FIELD_SUPPORTED_GEOFENCE_TYPES);
+        putStringProperty(props, PROPERTY_SELF_TEST_AVAILABLE, json, FIELD_SELF_TEST_AVAILABLE);
+        putStringProperty(props, Thing.PROPERTY_MAC_ADDRESS, json, FIELD_BLUETOOTH_MAC);
+        putStringProperty(props, PROPERTY_TRACKER_READ_ONLY, json, FIELD_READ_ONLY);
+        putEpochStringProperty(props, PROPERTY_TRACKER_READ_ONLY_SINCE, json, FIELD_READ_ONLY_SINCE);
+        if (!props.isEmpty()) {
+            updateProperties(props);
+        }
+    }
+
+    private static void putStringProperty(Map<String, String> props, String key, JsonObject json, String field) {
+        if (json.has(field) && !json.get(field).isJsonNull()) {
+            props.put(key, json.get(field).getAsString());
+        }
+    }
+
+    /**
+     * Joins a JSON array field's elements with commas into a single Thing property value. Mirrors
+     * {@link #updateJoinedArrayChannel} but writes to a property map instead of a channel.
+     */
+    private static void putJoinedArrayProperty(Map<String, String> props, String key, JsonObject json, String field) {
+        if (!json.has(field) || !json.get(field).isJsonArray()) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement el : json.get(field).getAsJsonArray()) {
+            if (sb.length() > 0) {
+                sb.append(",");
+            }
+            sb.append(el.getAsString());
+        }
+        props.put(key, sb.toString());
+    }
+
+    /** Formats an epoch-seconds JSON field as an ISO-8601 instant string Thing property. */
+    private static void putEpochStringProperty(Map<String, String> props, String key, JsonObject json, String field) {
+        if (json.has(field) && !json.get(field).isJsonNull()) {
+            props.put(key, Instant.ofEpochSecond(json.get(field).getAsLong()).toString());
+        }
     }
 
     /**
@@ -1107,70 +1238,52 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Applies a {@code trackable_object/{petId}} payload to the Profile channel group. Unlike every other
-     * {@code applyXxx} method in this class, the data behind this one is never fetched on the recurring timed poll
-     * schedule -- see README "Group profile" for the full list of what does trigger a fetch.
+     * Applies a {@code trackable_object/{petId}} payload. Unlike every other {@code applyXxx} method in this class,
+     * the data behind this one is never fetched on the recurring timed poll schedule -- see README "Group profile"
+     * for the full list of what does trigger a fetch. Most of it is static pet-biographical data with no rule or
+     * charting value, so it becomes Thing properties rather than channels; only {@code height}/{@code weight}
+     * (occasionally-changing measurements) and {@code home-location} (needs the {@code Location} item type) stay
+     * channels.
      *
-     * {@code details.read_only} is deliberately not surfaced as its own channel: it always agrees with the
-     * top-level {@link #FIELD_READ_ONLY}, which {@link #CHANNEL_PROFILE_READ_ONLY} already covers.
+     * {@code details.read_only} is deliberately not surfaced as its own property: it always agrees with the
+     * top-level {@link #FIELD_READ_ONLY}, which {@link #PROPERTY_PET_READ_ONLY} already covers.
      *
      * {@code lim}/{@code ribcage}'s unit is assumed to match {@code details.height}'s convention (metres); this is
-     * unconfirmed, since both have been {@code null} in every capture taken so far.
+     * unconfirmed, since both have been {@code null} in every capture taken so far -- as plain properties, they're
+     * recorded as unitless numeric strings.
      */
     protected void applyProfile(JsonObject json) {
         logger.trace("Applying profile: {}", json);
-        if (isLinked(CHANNEL_LEADERBOARD_OPT_OUT) && json.has(FIELD_LEADERBOARD_OPT_OUT)
-                && !json.get(FIELD_LEADERBOARD_OPT_OUT).isJsonNull()) {
-            updateState(CHANNEL_LEADERBOARD_OPT_OUT,
-                    OnOffType.from(json.get(FIELD_LEADERBOARD_OPT_OUT).getAsBoolean()));
-        }
-        if (isLinked(CHANNEL_PROFILE_READ_ONLY) && json.has(FIELD_READ_ONLY)
-                && !json.get(FIELD_READ_ONLY).isJsonNull()) {
-            updateState(CHANNEL_PROFILE_READ_ONLY, OnOffType.from(json.get(FIELD_READ_ONLY).getAsBoolean()));
-        }
-        updateEpochChannel(CHANNEL_PROFILE_CREATED_AT, json, FIELD_CREATED_AT);
-        if (isLinked(CHANNEL_WALK_SHARING_CONSENT) && json.has(FIELD_IS_WALK_SHARING_CONSENT_PROVIDED)
-                && !json.get(FIELD_IS_WALK_SHARING_CONSENT_PROVIDED).isJsonNull()) {
-            updateState(CHANNEL_WALK_SHARING_CONSENT,
-                    OnOffType.from(json.get(FIELD_IS_WALK_SHARING_CONSENT_PROVIDED).getAsBoolean()));
-        }
+        Map<String, String> props = new HashMap<>();
+        putStringProperty(props, PROPERTY_LEADERBOARD_OPT_OUT, json, FIELD_LEADERBOARD_OPT_OUT);
+        putStringProperty(props, PROPERTY_PET_READ_ONLY, json, FIELD_READ_ONLY);
+        boolean petReadOnly = json.has(FIELD_READ_ONLY) && !json.get(FIELD_READ_ONLY).isJsonNull()
+                && json.get(FIELD_READ_ONLY).getAsBoolean();
+        stateDescriptionProvider.setReadOnly(new ChannelUID(thing.getUID(), CHANNEL_HEIGHT), petReadOnly);
+        stateDescriptionProvider.setReadOnly(new ChannelUID(thing.getUID(), CHANNEL_WEIGHT), petReadOnly);
+        putEpochStringProperty(props, PROPERTY_PROFILE_CREATED_AT, json, FIELD_CREATED_AT);
+        putStringProperty(props, PROPERTY_WALK_SHARING_CONSENT, json, FIELD_IS_WALK_SHARING_CONSENT_PROVIDED);
         if (json.has(FIELD_DETAILS) && json.get(FIELD_DETAILS).isJsonObject()) {
             JsonObject details = json.get(FIELD_DETAILS).getAsJsonObject();
-            updateStringChannel(CHANNEL_GENDER, details, FIELD_GENDER);
-            updateEpochChannel(CHANNEL_BIRTHDAY, details, FIELD_BIRTHDAY);
+            putStringProperty(props, PROPERTY_GENDER, details, FIELD_GENDER);
+            putEpochStringProperty(props, PROPERTY_BIRTHDAY, details, FIELD_BIRTHDAY);
             if (isLinked(CHANNEL_HEIGHT) && details.has(FIELD_HEIGHT) && !details.get(FIELD_HEIGHT).isJsonNull()) {
                 updateState(CHANNEL_HEIGHT, new QuantityType<>(details.get(FIELD_HEIGHT).getAsDouble(), SIUnits.METRE));
             }
             if (isLinked(CHANNEL_WEIGHT) && details.has(FIELD_WEIGHT) && !details.get(FIELD_WEIGHT).isJsonNull()) {
                 updateState(CHANNEL_WEIGHT, new QuantityType<>(details.get(FIELD_WEIGHT).getAsDouble(), SIUnits.GRAM));
             }
-            if (isLinked(CHANNEL_NEUTERED) && details.has(FIELD_NEUTERED)
-                    && !details.get(FIELD_NEUTERED).isJsonNull()) {
-                updateState(CHANNEL_NEUTERED, OnOffType.from(details.get(FIELD_NEUTERED).getAsBoolean()));
-            }
-            updateJoinedArrayChannel(CHANNEL_BREED_IDS, details, FIELD_BREED_IDS);
-            updateStringChannel(CHANNEL_PET_TYPE, details, FIELD_PET_TYPE);
-            updateStringChannel(CHANNEL_CHIP_ID, details, FIELD_CHIP_ID);
-            if (isLinked(CHANNEL_LIM) && details.has(FIELD_LIM) && !details.get(FIELD_LIM).isJsonNull()) {
-                updateState(CHANNEL_LIM, new QuantityType<>(details.get(FIELD_LIM).getAsDouble(), SIUnits.METRE));
-            }
-            if (isLinked(CHANNEL_RIBCAGE) && details.has(FIELD_RIBCAGE) && !details.get(FIELD_RIBCAGE).isJsonNull()) {
-                updateState(CHANNEL_RIBCAGE,
-                        new QuantityType<>(details.get(FIELD_RIBCAGE).getAsDouble(), SIUnits.METRE));
-            }
-            updateStringChannel(CHANNEL_INSTAGRAM_USERNAME, details, FIELD_INSTAGRAM_USERNAME);
-            if (isLinked(CHANNEL_WEIGHT_IS_DEFAULT) && details.has(FIELD_WEIGHT_IS_DEFAULT)
-                    && !details.get(FIELD_WEIGHT_IS_DEFAULT).isJsonNull()) {
-                updateState(CHANNEL_WEIGHT_IS_DEFAULT,
-                        OnOffType.from(details.get(FIELD_WEIGHT_IS_DEFAULT).getAsBoolean()));
-            }
-            if (isLinked(CHANNEL_HEIGHT_IS_DEFAULT) && details.has(FIELD_HEIGHT_IS_DEFAULT)
-                    && !details.get(FIELD_HEIGHT_IS_DEFAULT).isJsonNull()) {
-                updateState(CHANNEL_HEIGHT_IS_DEFAULT,
-                        OnOffType.from(details.get(FIELD_HEIGHT_IS_DEFAULT).getAsBoolean()));
-            }
-            updateStringChannel(CHANNEL_PROFILE_PICTURE_ID, details, FIELD_PROFILE_PICTURE_ID);
-            updateJoinedArrayChannel(CHANNEL_GALLERY_PICTURE_IDS, details, FIELD_GALLERY_PICTURE_IDS);
+            putStringProperty(props, PROPERTY_NEUTERED, details, FIELD_NEUTERED);
+            putJoinedArrayProperty(props, PROPERTY_BREED_IDS, details, FIELD_BREED_IDS);
+            putStringProperty(props, PROPERTY_PET_TYPE, details, FIELD_PET_TYPE);
+            putStringProperty(props, PROPERTY_CHIP_ID, details, FIELD_CHIP_ID);
+            putStringProperty(props, PROPERTY_LIM, details, FIELD_LIM);
+            putStringProperty(props, PROPERTY_RIBCAGE, details, FIELD_RIBCAGE);
+            putStringProperty(props, PROPERTY_INSTAGRAM_USERNAME, details, FIELD_INSTAGRAM_USERNAME);
+            putStringProperty(props, PROPERTY_WEIGHT_IS_DEFAULT, details, FIELD_WEIGHT_IS_DEFAULT);
+            putStringProperty(props, PROPERTY_HEIGHT_IS_DEFAULT, details, FIELD_HEIGHT_IS_DEFAULT);
+            putStringProperty(props, PROPERTY_PROFILE_PICTURE_ID, details, FIELD_PROFILE_PICTURE_ID);
+            putJoinedArrayProperty(props, PROPERTY_GALLERY_PICTURE_IDS, details, FIELD_GALLERY_PICTURE_IDS);
         }
         if (isLinked(CHANNEL_HOME_LOCATION) && json.has(FIELD_HOME_LOCATION)
                 && json.get(FIELD_HOME_LOCATION).isJsonArray()) {
@@ -1179,6 +1292,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 updateState(CHANNEL_HOME_LOCATION, new PointType(new DecimalType(hl.get(0).getAsDouble()),
                         new DecimalType(hl.get(1).getAsDouble())));
             }
+        }
+        if (!props.isEmpty()) {
+            updateProperties(props);
         }
     }
 

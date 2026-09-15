@@ -74,12 +74,12 @@ public class TractiveDog6Actions implements ThingActions {
     }
 
     /**
-     * Triggers an immediate Device Info and battery-level refresh. Also re-polls Tracker Status, but that group
-     * only actually changes as a result if this happens to be the very first successful poll ever -- REST seeds it
-     * once and the real-time channel is authoritative afterward (see
+     * Triggers an immediate {@code tracker/{trackerId}} re-poll, refreshing {@code device-info#battery-save-mode}
+     * outside the recurring schedule. Mainly useful with {@code refreshInterval == 0} or to pick up a
+     * battery-save-mode change made in the Tractive app right away (see
      * {@link org.openhab.binding.tractive.internal.handler.TractiveTrackerHandler#refreshHardware()}).
      */
-    @RuleAction(label = "Refresh hardware", description = "Triggers an immediate refresh of the \"Device Info\" channel group and \"Hardware\"'s battery level, outside the polling schedule. Also re-polls \"Tracker Status\", but that group only updates as a result on the very first call ever made.")
+    @RuleAction(label = "Refresh hardware", description = "Re-polls the tracker's device details, refreshing \"Device Info\"'s battery-save-mode outside the regular schedule.")
     public void refreshHardware() {
         TractiveDog6Handler h = handler;
         if (h != null) {

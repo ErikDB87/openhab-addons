@@ -20,10 +20,13 @@ import java.util.concurrent.TimeUnit;
 
 import org.eclipse.jdt.annotation.NonNullByDefault;
 import org.eclipse.jetty.client.HttpClient;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.action.TractiveDog6Actions;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
+import org.openhab.core.library.types.QuantityType;
 import org.openhab.core.library.types.StringType;
+import org.openhab.core.library.unit.SIUnits;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
 import org.openhab.core.thing.binding.ThingHandlerService;
@@ -55,8 +58,8 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
     /**
      * Creates a new Dog 6 tracker handler for the given thing.
      */
-    public TractiveDog6Handler(Thing thing) {
-        super(thing);
+    public TractiveDog6Handler(Thing thing, TractiveStateDescriptionProvider stateDescriptionProvider) {
+        super(thing, stateDescriptionProvider);
     }
 
     @Override
@@ -94,6 +97,32 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
             case CHANNEL_SEPARATION_PHASE_ONGOING:
                 taskTracker.track(scheduler.schedule(
                         () -> setSeparationPhase(httpClient, bridge, command == OnOffType.ON), 0, TimeUnit.SECONDS));
+                break;
+            case CHANNEL_HEIGHT:
+                if (command instanceof QuantityType<?> qty) {
+                    QuantityType<?> metres = qty.toUnit(SIUnits.METRE);
+                    if (metres == null) {
+                        logger.warn("Cannot convert {} to metres for {}", command, channelUID.getId());
+                        break;
+                    }
+                    taskTracker.track(
+                            scheduler.schedule(() -> setHeight(httpClient, bridge, metres), 0, TimeUnit.SECONDS));
+                } else {
+                    logger.debug("Ignoring non-quantity command for {}", channelUID.getId());
+                }
+                break;
+            case CHANNEL_WEIGHT:
+                if (command instanceof QuantityType<?> qty) {
+                    QuantityType<?> grams = qty.toUnit(SIUnits.GRAM);
+                    if (grams == null) {
+                        logger.warn("Cannot convert {} to grams for {}", command, channelUID.getId());
+                        break;
+                    }
+                    taskTracker
+                            .track(scheduler.schedule(() -> setWeight(httpClient, bridge, grams), 0, TimeUnit.SECONDS));
+                } else {
+                    logger.debug("Ignoring non-quantity command for {}", channelUID.getId());
+                }
                 break;
             default:
                 logger.debug("Ignoring command for read-only channel {}", channelUID.getId());

@@ -37,6 +37,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.library.types.DecimalType;
 import org.openhab.core.library.types.OnOffType;
@@ -79,8 +80,11 @@ class TractiveDog6HandlerJsonTest {
 
     @Mock
     private @NonNullByDefault({}) Thing thing;
+
     @Mock
     private @NonNullByDefault({}) ThingHandlerCallback callback;
+    @Mock
+    private @NonNullByDefault({}) TractiveStateDescriptionProvider stateDescriptionProvider;
     private @NonNullByDefault({}) TractiveDog6Handler handler;
 
     @Mock
@@ -91,7 +95,7 @@ class TractiveDog6HandlerJsonTest {
     void setUp() throws Exception {
         lenient().when(thing.getUID()).thenReturn(THING_UID);
         lenient().when(callback.isChannelLinked(any())).thenReturn(true);
-        handler = new TractiveDog6Handler(thing);
+        handler = new TractiveDog6Handler(thing, stateDescriptionProvider);
         handler.setCallback(callback);
 
         scheduledFutures = new ArrayList<>();
@@ -349,7 +353,7 @@ class TractiveDog6HandlerJsonTest {
     }
 
     @Test
-    void applyProfileNewFieldsUpdatesAllChannels() {
+    void applyProfileNewFieldsSetsAllProperties() {
         JsonObject details = new JsonObject();
         details.addProperty(TractiveBindingConstants.FIELD_PET_TYPE, "DOG");
         details.addProperty(TractiveBindingConstants.FIELD_CHIP_ID, "985121012345678");
@@ -371,32 +375,26 @@ class TractiveDog6HandlerJsonTest {
         json.addProperty(TractiveBindingConstants.FIELD_IS_WALK_SHARING_CONSENT_PROVIDED, false);
         json.add(TractiveBindingConstants.FIELD_DETAILS, details);
 
-        Map<String, State> updates = captureUpdates(() -> handler.applyProfile(json));
+        handler.applyProfile(json);
 
-        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_LEADERBOARD_OPT_OUT));
-        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_PROFILE_READ_ONLY));
-        assertEquals(Instant.ofEpochSecond(1712325806L),
-                ((DateTimeType) Objects
-                        .requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_PROFILE_CREATED_AT)))
-                        .getInstant());
-        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_WALK_SHARING_CONSENT));
-        assertEquals(new StringType("DOG"), updates.get(TractiveBindingConstants.CHANNEL_PET_TYPE));
-        assertEquals(new StringType("985121012345678"), updates.get(TractiveBindingConstants.CHANNEL_CHIP_ID));
-        assertEquals(12.5, ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_LIM)))
-                .doubleValue());
-        assertEquals(34.0,
-                ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_RIBCAGE)))
-                        .doubleValue());
-        assertEquals(new StringType("samson_the_dog"),
-                updates.get(TractiveBindingConstants.CHANNEL_INSTAGRAM_USERNAME));
-        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_WEIGHT_IS_DEFAULT));
-        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_HEIGHT_IS_DEFAULT));
-        assertEquals(new StringType("abc123"), updates.get(TractiveBindingConstants.CHANNEL_PROFILE_PICTURE_ID));
-        assertEquals(new StringType("pic1,pic2"), updates.get(TractiveBindingConstants.CHANNEL_GALLERY_PICTURE_IDS));
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_LEADERBOARD_OPT_OUT, "false");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PET_READ_ONLY, "true");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PROFILE_CREATED_AT,
+                Instant.ofEpochSecond(1712325806L).toString());
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_WALK_SHARING_CONSENT, "false");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PET_TYPE, "DOG");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_CHIP_ID, "985121012345678");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_LIM, "12.5");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_RIBCAGE, "34.0");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_INSTAGRAM_USERNAME, "samson_the_dog");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_WEIGHT_IS_DEFAULT, "false");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_HEIGHT_IS_DEFAULT, "true");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PROFILE_PICTURE_ID, "abc123");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_GALLERY_PICTURE_IDS, "pic1,pic2");
     }
 
     @Test
-    void applyProfilePreExistingFieldsUpdatesAllChannels() {
+    void applyProfilePreExistingFieldsUpdatesChannelsAndProperties() {
         JsonObject details = new JsonObject();
         details.addProperty(TractiveBindingConstants.FIELD_GENDER, "M");
         details.addProperty(TractiveBindingConstants.FIELD_BIRTHDAY, SAMSON_DATE_OF_BIRTH);
@@ -416,37 +414,37 @@ class TractiveDog6HandlerJsonTest {
 
         Map<String, State> updates = captureUpdates(() -> handler.applyProfile(json));
 
-        assertEquals(new StringType("M"), updates.get(TractiveBindingConstants.CHANNEL_GENDER));
-        assertEquals(Instant.ofEpochSecond(SAMSON_DATE_OF_BIRTH),
-                ((DateTimeType) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_BIRTHDAY)))
-                        .getInstant());
         assertEquals(SAMSON_HEIGHT,
                 ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_HEIGHT)))
                         .doubleValue());
         assertEquals(SAMSON_WEIGHT,
                 ((QuantityType<?>) Objects.requireNonNull(updates.get(TractiveBindingConstants.CHANNEL_WEIGHT)))
                         .doubleValue());
-        assertEquals(OnOffType.ON, updates.get(TractiveBindingConstants.CHANNEL_NEUTERED));
-        assertEquals(new StringType("925"), updates.get(TractiveBindingConstants.CHANNEL_BREED_IDS));
         assertEquals(new PointType(new DecimalType(51.2038919), new DecimalType(4.7111879)),
                 updates.get(TractiveBindingConstants.CHANNEL_HOME_LOCATION));
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_GENDER, "M");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_BIRTHDAY,
+                Instant.ofEpochSecond(SAMSON_DATE_OF_BIRTH).toString());
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_NEUTERED, "true");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_BREED_IDS, "925");
     }
 
     @Test
-    void applyProfileDetailsReadOnlyIsNotSurfacedAsItsOwnChannel() {
+    void applyProfileDetailsReadOnlyIsNotSurfacedSeparately() {
         JsonObject details = new JsonObject();
         details.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, true);
         JsonObject json = new JsonObject();
         json.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, false);
         json.add(TractiveBindingConstants.FIELD_DETAILS, details);
 
-        Map<String, State> updates = captureUpdates(() -> handler.applyProfile(json));
+        handler.applyProfile(json);
 
-        assertEquals(OnOffType.OFF, updates.get(TractiveBindingConstants.CHANNEL_PROFILE_READ_ONLY));
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PET_READ_ONLY, "false");
+        verify(thing, never()).setProperty(eq(TractiveBindingConstants.PROPERTY_PET_READ_ONLY), eq("true"));
     }
 
     @Test
-    void applyProfileNewFieldsNullValuesNoExceptionNoUpdates() {
+    void applyProfileNewFieldsNullValuesNoExceptionNoPropertyUpdates() {
         JsonObject details = new JsonObject();
         details.add(TractiveBindingConstants.FIELD_LIM, JsonNull.INSTANCE);
         details.add(TractiveBindingConstants.FIELD_RIBCAGE, JsonNull.INSTANCE);
@@ -455,12 +453,9 @@ class TractiveDog6HandlerJsonTest {
         json.add(TractiveBindingConstants.FIELD_DETAILS, details);
 
         assertDoesNotThrow(() -> handler.applyProfile(json));
-        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIM)),
-                any(State.class));
-        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_RIBCAGE)),
-                any(State.class));
-        verify(callback, never()).stateUpdated(
-                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_PROFILE_READ_ONLY)), any(State.class));
+        verify(thing, never()).setProperty(eq(TractiveBindingConstants.PROPERTY_LIM), anyString());
+        verify(thing, never()).setProperty(eq(TractiveBindingConstants.PROPERTY_RIBCAGE), anyString());
+        verify(thing, never()).setProperty(eq(TractiveBindingConstants.PROPERTY_PET_READ_ONLY), anyString());
     }
 
     @Test
@@ -1198,5 +1193,31 @@ class TractiveDog6HandlerJsonTest {
 
         verify(callback, never())
                 .stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_ZONE_LAST_SEEN_AT)), any());
+    }
+
+    @Test
+    void applyProfileSetsReadOnlyOverrideForHeightAndWeightWhenAccountIsSharedReadOnly() {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, true);
+
+        handler.applyProfile(json);
+
+        verify(stateDescriptionProvider)
+                .setReadOnly(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_HEIGHT)), eq(true));
+        verify(stateDescriptionProvider)
+                .setReadOnly(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_WEIGHT)), eq(true));
+    }
+
+    @Test
+    void applyProfileClearsReadOnlyOverrideForHeightAndWeightWhenAccountIsOwner() {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_READ_ONLY, false);
+
+        handler.applyProfile(json);
+
+        verify(stateDescriptionProvider)
+                .setReadOnly(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_HEIGHT)), eq(false));
+        verify(stateDescriptionProvider)
+                .setReadOnly(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_WEIGHT)), eq(false));
     }
 }

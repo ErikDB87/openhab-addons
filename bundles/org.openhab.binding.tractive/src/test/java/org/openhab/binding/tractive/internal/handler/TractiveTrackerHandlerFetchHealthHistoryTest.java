@@ -35,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.openhab.binding.tractive.internal.TractiveBindingConstants;
+import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
 import org.openhab.core.library.types.DateTimeType;
 import org.openhab.core.thing.ChannelUID;
@@ -83,6 +84,7 @@ class TractiveTrackerHandlerFetchHealthHistoryTest {
     private @NonNullByDefault({}) Request sleepRequest;
     @Mock
     private @NonNullByDefault({}) ContentResponse sleepResponse;
+    private final TractiveStateDescriptionProvider stateDescriptionProvider = new TractiveStateDescriptionProvider();
     private @NonNullByDefault({}) TractiveDog6Handler handler;
 
     @BeforeEach
@@ -97,7 +99,7 @@ class TractiveTrackerHandlerFetchHealthHistoryTest {
         lenient().when(request.send()).thenReturn(response);
 
         TractiveAccountHandler br = bridge;
-        handler = new TractiveDog6Handler(thing) {
+        handler = new TractiveDog6Handler(thing, stateDescriptionProvider) {
             {
                 trackerId = SAMSON_TRACKER_ID;
                 trackedPetId = SAMSON_PET_ID;
@@ -166,7 +168,7 @@ class TractiveTrackerHandlerFetchHealthHistoryTest {
 
     @Test
     void noBridgeReturnsNullWithoutHttpCall() throws Exception {
-        TractiveDog6Handler noBridgeHandler = new TractiveDog6Handler(thing) {
+        TractiveDog6Handler noBridgeHandler = new TractiveDog6Handler(thing, stateDescriptionProvider) {
             {
                 trackerId = SAMSON_TRACKER_ID;
                 trackedPetId = SAMSON_PET_ID;
