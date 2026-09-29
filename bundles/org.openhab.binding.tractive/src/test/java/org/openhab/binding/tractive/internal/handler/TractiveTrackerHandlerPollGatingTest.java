@@ -290,6 +290,20 @@ class TractiveTrackerHandlerPollGatingTest {
     }
 
     @Test
+    void pollHwReportMakesHttpCallWhenTemperatureStateIsLinked() {
+        lenient()
+                .when(callback.isChannelLinked(
+                        eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_TEMPERATURE_STATE))))
+                .thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        handler.pollHwReport(bridge);
+
+        verify(httpClient).newRequest(anyString());
+    }
+
+    @Test
     void pollPositionReportSkipsHttpCallByDefaultBeforeAnyChannelIsLinked() {
         handler.pollPositionReport(bridge);
 

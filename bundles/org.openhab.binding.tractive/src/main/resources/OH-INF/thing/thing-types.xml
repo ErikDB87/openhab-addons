@@ -72,6 +72,7 @@
 			<channel id="speed" typeId="speed"/>
 			<channel id="sensor-used" typeId="sensor-used"/>
 			<channel id="position-accuracy" typeId="position-accuracy"/>
+			<channel id="nearby-user-id" typeId="nearby-user-id"/>
 		</channels>
 	</channel-group-type>
 
@@ -79,6 +80,7 @@
 		<label>Hardware</label>
 		<channels>
 			<channel id="battery-level" typeId="system.battery-level"/>
+			<channel id="temperature-state" typeId="temperature-state"/>
 		</channels>
 	</channel-group-type>
 
@@ -117,6 +119,15 @@
 			<channel id="buzzer-remaining" typeId="control-remaining">
 				<label>Buzzer Remaining</label>
 			</channel>
+			<channel id="buzzer-pending" typeId="control-pending">
+				<label>Buzzer Pending</label>
+			</channel>
+			<channel id="buzzer-reconnecting" typeId="control-reconnecting">
+				<label>Buzzer Reconnecting</label>
+			</channel>
+			<channel id="buzzer-started-at" typeId="control-started-at">
+				<label>Buzzer Started At</label>
+			</channel>
 			<channel id="led" typeId="led"/>
 			<channel id="led-timeout" typeId="control-timeout">
 				<label>LED Timeout</label>
@@ -124,12 +135,30 @@
 			<channel id="led-remaining" typeId="control-remaining">
 				<label>LED Remaining</label>
 			</channel>
+			<channel id="led-pending" typeId="control-pending">
+				<label>LED Pending</label>
+			</channel>
+			<channel id="led-reconnecting" typeId="control-reconnecting">
+				<label>LED Reconnecting</label>
+			</channel>
+			<channel id="led-started-at" typeId="control-started-at">
+				<label>LED Started At</label>
+			</channel>
 			<channel id="live-tracking" typeId="live-tracking"/>
 			<channel id="live-tracking-timeout" typeId="control-timeout">
 				<label>Live Tracking Timeout</label>
 			</channel>
 			<channel id="live-tracking-remaining" typeId="control-remaining">
 				<label>Live Tracking Remaining</label>
+			</channel>
+			<channel id="live-tracking-pending" typeId="control-pending">
+				<label>Live Tracking Pending</label>
+			</channel>
+			<channel id="live-tracking-reconnecting" typeId="control-reconnecting">
+				<label>Live Tracking Reconnecting</label>
+			</channel>
+			<channel id="live-tracking-started-at" typeId="control-started-at">
+				<label>Live Tracking Started At</label>
 			</channel>
 		</channels>
 	</channel-group-type>
@@ -216,6 +245,23 @@
 		<label>Position Accuracy</label>
 		<description>Estimated position uncertainty in metres (always 30 for KNOWN_WIFI)</description>
 		<state readOnly="true" pattern="%.0f %unit%"/>
+	</channel-type>
+
+	<channel-type id="nearby-user-id" advanced="true">
+		<item-type>String</item-type>
+		<label>Nearby User ID</label>
+		<description>Internal ID of the real Tractive account whose phone is BLE-near the tracker, when known;
+			absent from
+			almost every real position report</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="temperature-state" advanced="true">
+		<item-type>String</item-type>
+		<label>Temperature State</label>
+		<description>A hardware temperature-related state; always null in every capture taken so far, meaning
+			unresolved</description>
+		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="charging-state">
@@ -531,6 +577,32 @@
 			<tag>Duration</tag>
 		</tags>
 		<state readOnly="true" pattern="%.1f %unit%"/>
+	</channel-type>
+
+	<channel-type id="control-pending" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Command Pending</label>
+		<description>Whether the cloud has accepted this command but the tracker has not yet executed it</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="control-reconnecting" advanced="true">
+		<item-type>Switch</item-type>
+		<label>Command Reconnecting</label>
+		<description>Whether the tracker was mid-reconnect while this command was outstanding; has been OFF in
+			every real
+			capture taken so far</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="control-started-at" advanced="true">
+		<item-type>DateTime</item-type>
+		<label>Command Started At</label>
+		<description>When this activation started; undefined while inactive</description>
+		<tags>
+			<tag>Timestamp</tag>
+		</tags>
+		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="pet-height" advanced="true">

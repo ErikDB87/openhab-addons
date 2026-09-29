@@ -1,7 +1,7 @@
 # Write-endpoint probes
 
 Tractive's public REST surface (as used by this binding) is entirely read-only and command GETs — the
-official Android app also *writes* several things (battery-save mode, separation-phase tracking, live
+official Android app also _writes_ several things (battery-save mode, separation-phase tracking, live
 tracking's auto-stop duration, the pet's activity goal, the pet's profile fields) via endpoints that
 aren't documented anywhere and aren't used by this binding. The five scripts here were built to answer
 one recurring question about each of those endpoints, safely: **is this write endpoint something the
@@ -22,7 +22,7 @@ endpoint and circumstance:
 - **A client-registry gate** — the endpoint only works for a specific, whitelisted `x-tractive-client`
   value (the official app's), and this binding's own client id is rejected outright, regardless of
   which account is authenticated.
-- **An account-ownership gate** — the endpoint works fine for *some* accounts and not others, keyed on
+- **An account-ownership gate** — the endpoint works fine for _some_ accounts and not others, keyed on
   whether the authenticated account actually owns the pet/tracker (as opposed to having shared/invited
   access to it).
 - **A wrong or inaccessible resource id** — the request never had a chance either way, because the id
@@ -105,7 +105,7 @@ and safety reasoning in more depth than this file does.
 | `pet_detail` (`height`/`weight`/etc.) | No | **Yes — owner only** (`200` for the owner, `403 8006` for a shared/read-only account, same pet, same request) | **Shipped** — `profile#height`/`weight` writable Channels, with a `DynamicStateDescriptionProvider` reflecting the account's own read-only status in MainUI |
 | `lt_timeout` | No | **Yes — owner only** | Not shipped (would need read-only-account-guard machinery the binding doesn't otherwise have); confirmed viable as an owner-only follow-up |
 | `activity_setting` | **Yes** — `403 8006` even for the pet's owner | N/A | Dead end, first-party-app-only |
-| `request_status_update` | **Yes** — `403 8006` for this binding's client, `429 4006` (rate-limited, but *allowed*) for the official app's client, even across repeated spaced-out attempts | N/A | Dead end — and even on the one run that got a clean accept, a 5-minute watch of `device_pos_report`/`device_hw_report` showed zero movement: it doesn't wake a deep-dormant tracker even when it works |
+| `request_status_update` | **Yes** — `403 8006` for this binding's client, `429 4006` (rate-limited, but _allowed_) for the official app's client, even across repeated spaced-out attempts | N/A | Dead end — and even on the one run that got a clean accept, a 5-minute watch of `device_pos_report`/`device_hw_report` showed zero movement: it doesn't wake a deep-dormant tracker even when it works |
 
 Two write-mechanics findings that generalize across endpoints, both from `pet_detail_write_probe.py`
 but worth knowing before touching any of the others:

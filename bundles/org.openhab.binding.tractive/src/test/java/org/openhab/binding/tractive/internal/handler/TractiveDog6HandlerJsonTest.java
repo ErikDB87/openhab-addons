@@ -162,6 +162,39 @@ class TractiveDog6HandlerJsonTest {
     }
 
     @Test
+    void updateControlDiagnosticsUpdatesPendingReconnectingAndStartedAt() {
+        JsonObject control = new JsonObject();
+        control.addProperty(TractiveBindingConstants.FIELD_ACTIVE, true);
+        control.addProperty(TractiveBindingConstants.FIELD_PENDING, true);
+        control.addProperty(TractiveBindingConstants.FIELD_RECONNECTING, false);
+        control.addProperty(TractiveBindingConstants.FIELD_STARTED_AT, 1784832952L);
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.COMMAND_BUZZER_CONTROL, control);
+
+        Map<String, State> updates = captureUpdates(() -> handler.updateControlDiagnostics(
+                TractiveBindingConstants.CHANNEL_BUZZER_PENDING, TractiveBindingConstants.CHANNEL_BUZZER_RECONNECTING,
+                TractiveBindingConstants.CHANNEL_BUZZER_STARTED_AT, event,
+                TractiveBindingConstants.COMMAND_BUZZER_CONTROL));
+
+        assertEquals(OnOffType.ON, updates.get("commands#buzzer-pending"));
+        assertEquals(OnOffType.OFF, updates.get("commands#buzzer-reconnecting"));
+        assertInstanceOf(DateTimeType.class, updates.get("commands#buzzer-started-at"));
+    }
+
+    @Test
+    void updateControlDiagnosticsMissingFieldsNoException() {
+        JsonObject control = new JsonObject();
+        control.addProperty(TractiveBindingConstants.FIELD_ACTIVE, false);
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.COMMAND_BUZZER_CONTROL, control);
+
+        assertDoesNotThrow(() -> handler.updateControlDiagnostics(TractiveBindingConstants.CHANNEL_BUZZER_PENDING,
+                TractiveBindingConstants.CHANNEL_BUZZER_RECONNECTING,
+                TractiveBindingConstants.CHANNEL_BUZZER_STARTED_AT, event,
+                TractiveBindingConstants.COMMAND_BUZZER_CONTROL));
+    }
+
+    @Test
     void applyPositionReportUpdatesAllPositionChannels() {
         JsonObject json = new JsonObject();
         JsonArray latlong = new JsonArray();
@@ -173,6 +206,7 @@ class TractiveDog6HandlerJsonTest {
         json.addProperty(TractiveBindingConstants.FIELD_SPEED, 1.5);
         json.addProperty(TractiveBindingConstants.FIELD_SENSOR_USED, "GPS");
         json.addProperty(TractiveBindingConstants.FIELD_POS_UNCERTAINTY, 8);
+        json.addProperty(TractiveBindingConstants.FIELD_NEARBY_USER_ID, "65eeb9406e8687af338e3952");
 
         Map<String, State> updates = captureUpdates(() -> handler.applyPositionReport(json));
 
@@ -184,6 +218,7 @@ class TractiveDog6HandlerJsonTest {
         assertInstanceOf(QuantityType.class, updates.get("position#speed"));
         assertEquals(new StringType("GPS"), updates.get("position#sensor-used"));
         assertInstanceOf(QuantityType.class, updates.get("position#position-accuracy"));
+        assertEquals(new StringType("65eeb9406e8687af338e3952"), updates.get("position#nearby-user-id"));
     }
 
     @Test
@@ -216,6 +251,17 @@ class TractiveDog6HandlerJsonTest {
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BATTERY_LEVEL)),
                 eq(new DecimalType(65)));
+    }
+
+    @Test
+    void applyHwReportUpdatesTemperatureState() {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_TEMPERATURE_STATE, "SOME_VALUE");
+
+        handler.applyHwReport(json);
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_TEMPERATURE_STATE)),
+                eq(new StringType("SOME_VALUE")));
     }
 
     @Test
@@ -391,6 +437,89 @@ class TractiveDog6HandlerJsonTest {
         verify(thing).setProperty(TractiveBindingConstants.PROPERTY_HEIGHT_IS_DEFAULT, "true");
         verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PROFILE_PICTURE_ID, "abc123");
         verify(thing).setProperty(TractiveBindingConstants.PROPERTY_GALLERY_PICTURE_IDS, "pic1,pic2");
+    }
+
+    @Test
+    void applyProfileWalkSharingConsentAbsentClearsProperty() {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_LEADERBOARD_OPT_OUT, false);
+
+        handler.applyProfile(json);
+
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_WALK_SHARING_CONSENT, null);
+    }
+
+    @Test
+    void applyProfileOwnerOnlyFieldsSetsProperties() {
+        JsonObject activitySettings = new JsonObject();
+        activitySettings.addProperty(TractiveBindingConstants.FIELD_DAILY_GOAL, 1000);
+        activitySettings.addProperty(TractiveBindingConstants.FIELD_DAILY_DISTANCE_GOAL, 0);
+        activitySettings.addProperty(TractiveBindingConstants.FIELD_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE, "custom");
+        activitySettings.addProperty(TractiveBindingConstants.FIELD_DAILY_ACTIVE_MINUTES_GOAL_IS_DEFAULT, 1);
+
+        JsonObject details = new JsonObject();
+        details.addProperty(TractiveBindingConstants.FIELD_LENGTH, 45.0);
+        JsonArray personality = new JsonArray();
+        personality.add("playful");
+        personality.add("curious");
+        details.add(TractiveBindingConstants.FIELD_PERSONALITY, personality);
+        details.addProperty(TractiveBindingConstants.FIELD_LOST_OR_DEAD, false);
+        details.addProperty(TractiveBindingConstants.FIELD_BIRTHDAY_IS_DEFAULT, true);
+        details.addProperty(TractiveBindingConstants.FIELD_BREED_IS_DEFAULT, false);
+        details.add(TractiveBindingConstants.FIELD_ACTIVITY_SETTINGS, activitySettings);
+
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+
+        handler.applyProfile(json);
+
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_LENGTH, "45.0");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PERSONALITY, "playful,curious");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_LOST_OR_DEAD, "false");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_BIRTHDAY_IS_DEFAULT, "true");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_BREED_IS_DEFAULT, "false");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_DAILY_GOAL, "1000");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_DAILY_DISTANCE_GOAL, "0");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE, "custom");
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_DAILY_MINUTES_GOAL_IS_DEFAULT, "1");
+    }
+
+    @Test
+    void applyProfileOwnerOnlyFieldsAbsentClearsProperties() {
+        JsonObject details = new JsonObject();
+        details.addProperty(TractiveBindingConstants.FIELD_GENDER, "M");
+
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+
+        handler.applyProfile(json);
+
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_LENGTH, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_PERSONALITY, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_LOST_OR_DEAD, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_BIRTHDAY_IS_DEFAULT, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_BREED_IS_DEFAULT, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_DAILY_GOAL, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_DAILY_DISTANCE_GOAL, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE, null);
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_DAILY_MINUTES_GOAL_IS_DEFAULT, null);
+    }
+
+    @Test
+    void applyProfileActivityCategoryThresholdsOverrideNonPrimitiveDoesNotSetProperty() {
+        JsonArray thresholds = new JsonArray();
+        thresholds.add(10);
+        thresholds.add(30);
+        thresholds.add(60);
+        JsonObject activitySettings = new JsonObject();
+        activitySettings.add(TractiveBindingConstants.FIELD_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE, thresholds);
+        JsonObject details = new JsonObject();
+        details.add(TractiveBindingConstants.FIELD_ACTIVITY_SETTINGS, activitySettings);
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_DETAILS, details);
+
+        assertDoesNotThrow(() -> handler.applyProfile(json));
+        verify(thing).setProperty(TractiveBindingConstants.PROPERTY_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE, null);
     }
 
     @Test
