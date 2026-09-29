@@ -72,9 +72,19 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_SENSOR_USED = "position#sensor-used";
     /** Channel ID for the last position fix's accuracy/uncertainty radius. */
     public static final String CHANNEL_POSITION_ACCURACY = "position#position-accuracy";
+    /**
+     * Channel ID for a nearby-device/user ID accompanying a position fix, the real Tractive account whose phone is
+     * BLE-near the tracker at that moment.
+     */
+    public static final String CHANNEL_NEARBY_USER_ID = "position#nearby-user-id";
 
     /** Channel ID for battery level percentage; kept live by the real-time channel, backstopped by REST polling. */
     public static final String CHANNEL_BATTERY_LEVEL = "hardware#battery-level";
+    /**
+     * Channel ID for a hardware temperature-related state; always {@code null} in every capture taken so far, so
+     * its meaning remains unresolved.
+     */
+    public static final String CHANNEL_TEMPERATURE_STATE = "hardware#temperature-state";
     /**
      * Channel ID for the tracker's charging state (e.g. {@code NOT_CHARGING}). Lives in the {@code tracker-status}
      * group, not {@code hardware} -- see {@link #CHANNEL_TRACKER_STATE} for why.
@@ -195,6 +205,36 @@ public class TractiveBindingConstants {
     public static final String CHANNEL_LIVE_TRACKING_TIMEOUT = "commands#live-tracking-timeout";
     /** Channel ID for seconds remaining before live tracking auto-stops. */
     public static final String CHANNEL_LIVE_TRACKING_REMAINING = "commands#live-tracking-remaining";
+    /** Channel ID for whether the cloud has accepted the buzzer command but the tracker hasn't yet executed it. */
+    public static final String CHANNEL_BUZZER_PENDING = "commands#buzzer-pending";
+    /**
+     * Channel ID for whether the tracker was mid-reconnect while the buzzer command was outstanding; always
+     * {@code false} in every capture taken so far.
+     */
+    public static final String CHANNEL_BUZZER_RECONNECTING = "commands#buzzer-reconnecting";
+    /** Channel ID for when the current buzzer activation started; undefined while inactive. */
+    public static final String CHANNEL_BUZZER_STARTED_AT = "commands#buzzer-started-at";
+    /** Channel ID for whether the cloud has accepted the LED command but the tracker hasn't yet executed it. */
+    public static final String CHANNEL_LED_PENDING = "commands#led-pending";
+    /**
+     * Channel ID for whether the tracker was mid-reconnect while the LED command was outstanding; always
+     * {@code false} in every capture taken so far.
+     */
+    public static final String CHANNEL_LED_RECONNECTING = "commands#led-reconnecting";
+    /** Channel ID for when the current LED activation started; undefined while inactive. */
+    public static final String CHANNEL_LED_STARTED_AT = "commands#led-started-at";
+    /**
+     * Channel ID for whether the cloud has accepted the live-tracking command but the tracker hasn't yet executed
+     * it.
+     */
+    public static final String CHANNEL_LIVE_TRACKING_PENDING = "commands#live-tracking-pending";
+    /**
+     * Channel ID for whether the tracker was mid-reconnect while the live-tracking command was outstanding; always
+     * {@code false} in every capture taken so far.
+     */
+    public static final String CHANNEL_LIVE_TRACKING_RECONNECTING = "commands#live-tracking-reconnecting";
+    /** Channel ID for when the current live-tracking activation started; undefined while inactive. */
+    public static final String CHANNEL_LIVE_TRACKING_STARTED_AT = "commands#live-tracking-started-at";
 
     /** Channel ID for the duration of activity recorded today. */
     public static final String CHANNEL_ACTIVITY_RECORDED = "health#activity-recorded";
@@ -353,6 +393,47 @@ public class TractiveBindingConstants {
      * community/walk-sharing feature. Only refreshed at Thing setup or via {@code refreshProfile()}.
      */
     public static final String PROPERTY_WALK_SHARING_CONSENT = "walkSharingConsent";
+    /**
+     * Thing property name for the pet's body length ({@link #FIELD_LENGTH}). Only refreshed at Thing setup or via
+     * {@code refreshProfile()}.
+     */
+    public static final String PROPERTY_LENGTH = "length";
+    /**
+     * Thing property name for the pet's owner-set personality tags ({@link #FIELD_PERSONALITY}), comma-separated.
+     */
+    public static final String PROPERTY_PERSONALITY = "personality";
+    /**
+     * Thing property name for a presumed pet-status flag ({@link #FIELD_LOST_OR_DEAD}).
+     */
+    public static final String PROPERTY_LOST_OR_DEAD = "lostOrDead";
+    /**
+     * Thing property name for whether {@link #PROPERTY_BIRTHDAY} is a real value or a default
+     * ({@link #FIELD_BIRTHDAY_IS_DEFAULT}).
+     */
+    public static final String PROPERTY_BIRTHDAY_IS_DEFAULT = "birthdayIsDefault";
+    /**
+     * Thing property name for whether {@link #PROPERTY_BREED_IDS} is a real value or a default
+     * ({@link #FIELD_BREED_IS_DEFAULT}).
+     */
+    public static final String PROPERTY_BREED_IS_DEFAULT = "breedIsDefault";
+    /**
+     * Thing property name for a configured daily activity goal ({@link #FIELD_DAILY_GOAL}), units unconfirmed.
+     */
+    public static final String PROPERTY_ACTIVITY_DAILY_GOAL = "activityDailyGoal";
+    /**
+     * Thing property name for a configured daily distance goal ({@link #FIELD_DAILY_DISTANCE_GOAL}).
+     */
+    public static final String PROPERTY_ACTIVITY_DAILY_DISTANCE_GOAL = "activityDailyDistanceGoal";
+    /**
+     * Thing property name for a presumed activity-category threshold override
+     * ({@link #FIELD_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE}).
+     */
+    public static final String PROPERTY_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE = "activityCategoryThresholdsOverride";
+    /**
+     * Thing property name for whether the daily active-minutes goal is a real value or a default
+     * ({@link #FIELD_DAILY_ACTIVE_MINUTES_GOAL_IS_DEFAULT}, confirmed {@code Integer}-typed, not boolean).
+     */
+    public static final String PROPERTY_ACTIVITY_DAILY_MINUTES_GOAL_IS_DEFAULT = "activityDailyMinutesGoalIsDefault";
 
     /** JSON field name for the account email in the {@code POST auth/token} request body. */
     public static final String FIELD_PLATFORM_EMAIL = "platform_email";
@@ -444,6 +525,21 @@ public class TractiveBindingConstants {
     public static final String FIELD_REMAINING = "remaining";
     /** JSON field name for a buzzer/LED/live-tracking control object's configured auto-stop duration in seconds. */
     public static final String FIELD_TIMEOUT = "timeout";
+    /**
+     * JSON field name for whether the cloud has accepted a buzzer/LED/live-tracking command but the tracker hasn't
+     * yet executed it.
+     */
+    public static final String FIELD_PENDING = "pending";
+    /**
+     * JSON field name for whether the tracker was mid-reconnect while a buzzer/LED/live-tracking command was
+     * outstanding.
+     */
+    public static final String FIELD_RECONNECTING = "reconnecting";
+    /**
+     * JSON field name for when a buzzer/LED/live-tracking control object's current activation started, as a Unix
+     * epoch; absent/null while inactive.
+     */
+    public static final String FIELD_STARTED_AT = "started_at";
 
     /** JSON field name for the {@code [latitude, longitude]} position array. */
     public static final String FIELD_LATLONG = "latlong";
@@ -457,9 +553,19 @@ public class TractiveBindingConstants {
     public static final String FIELD_SENSOR_USED = "sensor_used";
     /** JSON field name for a REST position fix's accuracy/uncertainty radius in meters. */
     public static final String FIELD_POS_UNCERTAINTY = "pos_uncertainty";
+    /**
+     * JSON field name for a nearby-device/user ID accompanying a position fix, in both REST and the real-time
+     * channel.
+     */
+    public static final String FIELD_NEARBY_USER_ID = "nearby_user_id";
 
     /** JSON field name for battery level as a 0-100 integer. */
     public static final String FIELD_BATTERY_LEVEL = "battery_level";
+    /**
+     * JSON field name for a hardware temperature-related state, in both REST's {@code device_hw_report} and the
+     * real-time channel's nested {@code hardware} object.
+     */
+    public static final String FIELD_TEMPERATURE_STATE = "temperature_state";
     /** JSON field name for the tracker's operational state in REST responses. */
     public static final String FIELD_TRACKER_STATE = "state";
     /**
@@ -709,6 +815,74 @@ public class TractiveBindingConstants {
      * {@code trackable_object/{petId}}.
      */
     public static final String FIELD_IS_WALK_SHARING_CONSENT_PROVIDED = "is_walk_sharing_consent_provided";
+    /**
+     * JSON field name for the pet's body length, inside {@link #FIELD_DETAILS} -- presumably alongside
+     * {@link #FIELD_HEIGHT}/{@link #FIELD_WEIGHT}, unconfirmed by name alone. Entirely absent from a
+     * shared/{@code read_only} account's response, not merely {@code null} -- see
+     * {@link #PROPERTY_LENGTH}.
+     */
+    public static final String FIELD_LENGTH = "length";
+    /**
+     * JSON field name for a comma-separated list of owner-set personality tags, inside {@link #FIELD_DETAILS}. Same
+     * account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_PERSONALITY = "personality";
+    /**
+     * JSON field name for a presumed pet-status flag (e.g. reported lost or deceased), inside {@link #FIELD_DETAILS}.
+     * Same account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_LOST_OR_DEAD = "lost_or_dead";
+    /**
+     * JSON field name for whether {@link #FIELD_BIRTHDAY} is a real value or a default, inside
+     * {@link #FIELD_DETAILS} -- mirrors {@link #FIELD_WEIGHT_IS_DEFAULT}/{@link #FIELD_HEIGHT_IS_DEFAULT}. Same
+     * account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_BIRTHDAY_IS_DEFAULT = "birthday_is_default";
+    /**
+     * JSON field name for whether {@link #FIELD_BREED_IDS} is a real value or a default, inside
+     * {@link #FIELD_DETAILS}. Same account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_BREED_IS_DEFAULT = "breed_is_default";
+    /**
+     * JSON field name for a nested object mirroring the separately client-gated {@code GET activity_setting/{id}}
+     * endpoint's own record, inside {@link #FIELD_DETAILS} -- reachable here ungated. Same account-dependent
+     * absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_ACTIVITY_SETTINGS = "activity_settings";
+    /**
+     * JSON field name for a configured daily activity goal, inside {@link #FIELD_ACTIVITY_SETTINGS} -- units
+     * unconfirmed (possibly points, not minutes; distinct from the sibling {@code daily_active_minutes_goal}, which
+     * duplicates the already-channeled {@code health/overview.activity.minutesGoal} and is deliberately not read
+     * here).
+     *
+     * Same account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_DAILY_GOAL = "daily_goal";
+    /**
+     * JSON field name for a configured daily distance goal, inside {@link #FIELD_ACTIVITY_SETTINGS}. Same
+     * account-dependent absence and active-clear behavior as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_DAILY_DISTANCE_GOAL = "daily_distance_goal";
+    /**
+     * JSON field name for a presumed per-pet override of activity-intensity category thresholds, inside
+     * {@link #FIELD_ACTIVITY_SETTINGS} -- real shape unconfirmed (always {@code null} so far). The official
+     * Tractive Android app's own Moshi DTOs for this object ({@code ActivitySettingsGraphObject}/
+     * {@code ActivitySettingsCreationObject}) don't declare this field at all -- Moshi
+     * silently ignores unknown JSON keys, so the app has no code path to ever read or write it, making it likely
+     * dead/vestigial backend data with no known way to populate it. A same-named but distinct concept exists at the
+     * Bluetooth protocol layer ({@code com.tractive.tap}'s {@code ACTIVITY_CATEGORY_THRESHOLDS}, decoded as a plain
+     * {@code List<Integer>}) -- if this REST field is ever populated as a cloud-side mirror of that on-device
+     * config, a flat integer array is a more likely shape than a nested object, though this is not confirmed either
+     * way.
+     *
+     * Same account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE = "activity_category_thresholds_override";
+    /**
+     * JSON field name for whether {@code daily_active_minutes_goal} is a real value or a default, inside
+     * {@link #FIELD_ACTIVITY_SETTINGS}. Same account-dependent absence as {@link #FIELD_LENGTH}.
+     */
+    public static final String FIELD_DAILY_ACTIVE_MINUTES_GOAL_IS_DEFAULT = "daily_active_minutes_goal_is_default";
 
     /**
      * Tracker command name for the buzzer; also the {@link #MESSAGE_TRACKER_STATUS} field name carrying its confirmed

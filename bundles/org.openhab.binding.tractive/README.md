@@ -82,23 +82,27 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 
 ### Group `position`
 
-| Channel ID                    | Type          | R/W | Advanced | Description                                                               |
-| ----------------------------- | ------------- | --- | -------- | ------------------------------------------------------------------------- |
-| `position#location`           | Location      | R   | No       | Current location (latitude, longitude, altitude)¹                         |
-| `position#last-position-time` | DateTime      | R   | No       | Timestamp of the last position report¹                                    |
-| `position#speed`              | Number:Speed  | R   | No       | Speed at the last position report; `null` when the tracker is stationary¹ |
-| `position#sensor-used`        | String        | R   | Yes      | Positioning sensor: `GPS`, `KNOWN_WIFI`, `PHONE`, or `CELL`¹              |
-| `position#position-accuracy`  | Number:Length | R   | No       | Estimated position accuracy radius¹                                       |
+| Channel ID                    | Type          | R/W | Advanced | Description                                                                               |
+| ----------------------------- | ------------- | --- | -------- | ----------------------------------------------------------------------------------------- |
+| `position#location`           | Location      | R   | No       | Current location (latitude, longitude, altitude)¹                                         |
+| `position#last-position-time` | DateTime      | R   | No       | Timestamp of the last position report¹                                                    |
+| `position#speed`              | Number:Speed  | R   | No       | Speed at the last position report; `null` when the tracker is stationary¹                 |
+| `position#sensor-used`        | String        | R   | Yes      | Positioning sensor: `GPS`, `KNOWN_WIFI`, `PHONE`, or `CELL`¹                              |
+| `position#position-accuracy`  | Number:Length | R   | No       | Estimated position accuracy radius¹                                                       |
+| `position#nearby-user-id`     | String        | R   | Yes      | Internal ID of the real Tractive account whose phone is BLE-near the tracker, when known¹ |
 
 > **¹** Also updated by the periodic REST poll (`refreshInterval`), as a backstop — but the real-time channel normally already keeps this current, so REST polling isn't needed for it to stay accurate. When both sources have reported, whichever is actually newer wins.
 
 ### Group `hardware`
 
-| Channel ID               | Type   | R/W | Advanced | Description                    |
-| ------------------------ | ------ | --- | -------- | ------------------------------ |
-| `hardware#battery-level` | Number | R   | No       | Battery charge level, 0–100 %¹ |
+| Channel ID                   | Type   | R/W | Advanced | Description                             |
+| ---------------------------- | ------ | --- | -------- | --------------------------------------- |
+| `hardware#battery-level`     | Number | R   | No       | Battery charge level, 0–100 %¹          |
+| `hardware#temperature-state` | String | R   | Yes      | A hardware temperature-related state¹ ² |
 
 > **¹** Also updated by the periodic REST poll (`refreshInterval`), as a backstop — but the real-time channel normally already keeps this current, so REST polling isn't needed for it to stay accurate. When both sources have reported, whichever is actually newer wins.
+>
+> **²** Meaning unresolved — always `null` in every real capture taken so far.
 
 ### Group `tracker-status`
 
@@ -133,17 +137,26 @@ The tracker's model code, hardware edition, firmware version, and geofence sensi
 
 ### Group `commands`
 
-| Channel ID                         | Type        | R/W | Advanced | Description                                                                      |
-| ---------------------------------- | ----------- | --- | -------- | -------------------------------------------------------------------------------- |
-| `commands#buzzer`                  | Switch      | R/W | No       | Activate (`ON`) or deactivate (`OFF`) the audible buzzer                         |
-| `commands#buzzer-timeout`          | Number:Time | R   | Yes      | Configured maximum duration the buzzer is allowed to run before auto-stopping    |
-| `commands#buzzer-remaining`        | Number:Time | R   | Yes      | Seconds left before the buzzer auto-stops                                        |
-| `commands#led`                     | Switch      | R/W | No       | Activate (`ON`) or deactivate (`OFF`) the LED light                              |
-| `commands#led-timeout`             | Number:Time | R   | Yes      | Configured maximum duration the LED is allowed to run before auto-stopping       |
-| `commands#led-remaining`           | Number:Time | R   | Yes      | Seconds left before the LED auto-stops                                           |
-| `commands#live-tracking`           | Switch      | R/W | No       | Enable or disable high-frequency live tracking                                   |
-| `commands#live-tracking-timeout`   | Number:Time | R   | Yes      | Configured maximum duration live tracking is allowed to run before auto-stopping |
-| `commands#live-tracking-remaining` | Number:Time | R   | Yes      | Seconds left before live tracking auto-stops                                     |
+| Channel ID                            | Type        | R/W | Advanced | Description                                                                                     |
+| ------------------------------------- | ----------- | --- | -------- | ----------------------------------------------------------------------------------------------- |
+| `commands#buzzer`                     | Switch      | R/W | No       | Activate (`ON`) or deactivate (`OFF`) the audible buzzer                                        |
+| `commands#buzzer-timeout`             | Number:Time | R   | Yes      | Configured maximum duration the buzzer is allowed to run before auto-stopping                   |
+| `commands#buzzer-remaining`           | Number:Time | R   | Yes      | Seconds left before the buzzer auto-stops                                                       |
+| `commands#buzzer-pending`             | Switch      | R   | Yes      | Whether the cloud has accepted the buzzer command but the tracker hasn't yet executed it        |
+| `commands#buzzer-reconnecting`        | Switch      | R   | Yes      | Whether the tracker was mid-reconnect while the buzzer command was outstanding³                 |
+| `commands#buzzer-started-at`          | DateTime    | R   | Yes      | When the current buzzer activation started; undefined while inactive                            |
+| `commands#led`                        | Switch      | R/W | No       | Activate (`ON`) or deactivate (`OFF`) the LED light                                             |
+| `commands#led-timeout`                | Number:Time | R   | Yes      | Configured maximum duration the LED is allowed to run before auto-stopping                      |
+| `commands#led-remaining`              | Number:Time | R   | Yes      | Seconds left before the LED auto-stops                                                          |
+| `commands#led-pending`                | Switch      | R   | Yes      | Whether the cloud has accepted the LED command but the tracker hasn't yet executed it           |
+| `commands#led-reconnecting`           | Switch      | R   | Yes      | Whether the tracker was mid-reconnect while the LED command was outstanding³                    |
+| `commands#led-started-at`             | DateTime    | R   | Yes      | When the current LED activation started; undefined while inactive                               |
+| `commands#live-tracking`              | Switch      | R/W | No       | Enable or disable high-frequency live tracking                                                  |
+| `commands#live-tracking-timeout`      | Number:Time | R   | Yes      | Configured maximum duration live tracking is allowed to run before auto-stopping                |
+| `commands#live-tracking-remaining`    | Number:Time | R   | Yes      | Seconds left before live tracking auto-stops                                                    |
+| `commands#live-tracking-pending`      | Switch      | R   | Yes      | Whether the cloud has accepted the live-tracking command but the tracker hasn't yet executed it |
+| `commands#live-tracking-reconnecting` | Switch      | R   | Yes      | Whether the tracker was mid-reconnect while the live-tracking command was outstanding³          |
+| `commands#live-tracking-started-at`   | DateTime    | R   | Yes      | When the current live-tracking activation started; undefined while inactive                     |
 
 > **Note 1:** Tractive commands are queued in the cloud.
 > There may be a delay between sending a command and the tracker responding physically.
@@ -152,8 +165,10 @@ The tracker's model code, hardware edition, firmware version, and geofence sensi
 > If Tractive later reports that a command timed out before the tracker ever executed it, the binding forces the Item to `OFF`; this is confirmed correct for a failed _activation_.
 > A failed _deactivation_ would, in principle, also force the Item to `OFF` incorrectly if the device is still on, since the failure message doesn't indicate direction — but deactivation commands don't appear to produce this message at all; they queue with no cloud confirmation, relying instead on the local auto-off prediction (see below, covering all three command channels) to correct the Item once its own hardware timer would have expired regardless.
 >
-> **Note 3:** The `-timeout` and `-remaining` channels are only updated by the real-time channel push, not by REST polling — the command endpoints' own synchronous HTTP response is not reliable (see Note 2), so there is nothing safe to poll for these two fields.
+> **Note 3:** The `-timeout`, `-remaining`, `-pending`, `-reconnecting`, and `-started-at` channels are only updated by the real-time channel push, not by REST polling — the command endpoints' own synchronous HTTP response is not reliable (see Note 2), so there is nothing safe to poll for these fields.
 > The local auto-off prediction (see Note 2) also zeroes `-remaining` when it fires, alongside forcing the Switch to `OFF` — that `0` is the same local guess as the Switch state, not a fresh cloud confirmation.
+>
+> **³** Has been `OFF` in every real capture taken so far, so its meaning is a fairly confident guess from the field name, not a confirmed fact.
 >
 > **Note 4:** The tracker's physical button silences an active buzzer and reports that fact back to the cloud.
 >
@@ -254,7 +269,9 @@ The `dog-6` Thing also exposes these pet-profile properties, from `trackable_obj
 | `heightIsDefault`    | Whether `profile#height` is a real value or a breed-average default                                                                                                                 |
 | `profilePictureId`   | ID of the pet's profile photo asset                                                                                                                                                 |
 | `galleryPictureIds`  | Comma-separated IDs of the pet's gallery photo assets                                                                                                                               |
-| `walkSharingConsent` | Whether the owner consented to sharing this pet's walk data                                                                                                                         |
+| `walkSharingConsent` | Whether the owner consented to sharing this pet's walk data¹                                                                                                                        |
+
+> **¹** Only present in Tractive's API response for a shared/invited account — absent (not merely `null`) when polling under the pet's own owner account.
 
 ## Thing Actions
 
@@ -335,8 +352,10 @@ DateTime      samson_LastPositionTime      "Samson Last Position Update"        
 Number:Speed  samson_Speed                 "Samson Speed"                            ["Measurement", "Speed"]        { channel="tractive:dog-6:gert:samson:position#speed", unit="km/h" }
 String        samson_SensorUsed            "Samson Sensor"                           ["Point"]                       { channel="tractive:dog-6:gert:samson:position#sensor-used" }
 Number:Length samson_Accuracy              "Samson Accuracy"                         ["Point"]                       { channel="tractive:dog-6:gert:samson:position#position-accuracy" }
+String        samson_NearbyUserId          "Samson Nearby User ID"                   ["Point"]                       { channel="tractive:dog-6:gert:samson:position#nearby-user-id" }
 
 Number        samson_BatteryLevel          "Samson Battery"                <Battery> ["Energy", "Measurement"]       { channel="tractive:dog-6:gert:samson:hardware#battery-level" }
+String        samson_TemperatureState      "Samson Temperature State"                ["Point"]                       { channel="tractive:dog-6:gert:samson:hardware#temperature-state" }
 String        samson_ChargingState         "Samson Charging State"                   ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#charging-state" }
 String        samson_BatteryState          "Samson Battery State"                    ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#battery-state" }
 String        samson_TrackerState          "Samson Tracker State"                    ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#tracker-state" }
@@ -354,12 +373,21 @@ DateTime      samson_LastContact           "Samson Last Contact"                
 Switch        samson_Buzzer                "Samson Buzzer"                           ["Control"]                     { channel="tractive:dog-6:gert:samson:commands#buzzer" }
 Number:Time   samson_BuzzerTimeout         "Samson Buzzer Timeout"                   ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:commands#buzzer-timeout" }
 Number:Time   samson_BuzzerRemaining       "Samson Buzzer Remaining"                 ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:commands#buzzer-remaining" }
+Switch        samson_BuzzerPending         "Samson Buzzer Pending"                   ["Point"]                       { channel="tractive:dog-6:gert:samson:commands#buzzer-pending" }
+Switch        samson_BuzzerReconnecting    "Samson Buzzer Reconnecting"              ["Point"]                       { channel="tractive:dog-6:gert:samson:commands#buzzer-reconnecting" }
+DateTime      samson_BuzzerStartedAt       "Samson Buzzer Started At"                ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:commands#buzzer-started-at" }
 Switch        samson_LED                   "Samson LED"                    <light>   ["Control", "Light"]            { channel="tractive:dog-6:gert:samson:commands#led" }
 Number:Time   samson_LedTimeout            "Samson LED Timeout"                      ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:commands#led-timeout" }
 Number:Time   samson_LedRemaining          "Samson LED Remaining"                    ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:commands#led-remaining" }
+Switch        samson_LedPending            "Samson LED Pending"                      ["Point"]                       { channel="tractive:dog-6:gert:samson:commands#led-pending" }
+Switch        samson_LedReconnecting       "Samson LED Reconnecting"                 ["Point"]                       { channel="tractive:dog-6:gert:samson:commands#led-reconnecting" }
+DateTime      samson_LedStartedAt          "Samson LED Started At"                   ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:commands#led-started-at" }
 Switch        samson_LiveTracking          "Samson Live Tracking"                    ["Control"]                     { channel="tractive:dog-6:gert:samson:commands#live-tracking" }
 Number:Time   samson_LiveTrackingTimeout   "Samson Live Tracking Timeout"            ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:commands#live-tracking-timeout" }
 Number:Time   samson_LiveTrackingRemaining "Samson Live Tracking Remaining"          ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:commands#live-tracking-remaining" }
+Switch        samson_LiveTrackingPending   "Samson Live Tracking Pending"            ["Point"]                       { channel="tractive:dog-6:gert:samson:commands#live-tracking-pending" }
+Switch        samson_LiveTrackingReconnecting "Samson Live Tracking Reconnecting"    ["Point"]                       { channel="tractive:dog-6:gert:samson:commands#live-tracking-reconnecting" }
+DateTime      samson_LiveTrackingStartedAt "Samson Live Tracking Started At"         ["Point", "Timestamp"]          { channel="tractive:dog-6:gert:samson:commands#live-tracking-started-at" }
 
 Number:Time   samson_ActiveTime            "Samson Active"                           ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:health#activity-recorded", unit="s" }
 Number:Time   samson_ActivityGoal          "Samson Goal"                             ["Duration", "Measurement"]     { channel="tractive:dog-6:gert:samson:health#activity-goal", unit="s" }

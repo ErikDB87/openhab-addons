@@ -126,7 +126,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     private volatile long lastContactUpdateMs;
 
     private static final String[] POSITION_GROUP_CHANNEL_IDS = { CHANNEL_LOCATION, CHANNEL_LAST_POSITION_TIME,
-            CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY };
+            CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY, CHANNEL_NEARBY_USER_ID };
 
     protected final TractiveStateDescriptionProvider stateDescriptionProvider;
 
@@ -154,11 +154,17 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
                 updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
                 updateControlTiming(CHANNEL_BUZZER_TIMEOUT, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL);
+                updateControlDiagnostics(CHANNEL_LED_PENDING, CHANNEL_LED_RECONNECTING, CHANNEL_LED_STARTED_AT, event,
+                        COMMAND_LED_CONTROL);
+                updateControlDiagnostics(CHANNEL_BUZZER_PENDING, CHANNEL_BUZZER_RECONNECTING, CHANNEL_BUZZER_STARTED_AT,
+                        event, COMMAND_BUZZER_CONTROL);
                 scheduleOrCancelAutoOff(CHANNEL_BUZZER, CHANNEL_BUZZER_REMAINING, event, COMMAND_BUZZER_CONTROL);
                 scheduleOrCancelAutoOff(CHANNEL_LED, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
                 applyControlState(CHANNEL_LIVE_TRACKING, event, COMMAND_LIVE_TRACKING);
                 updateControlTiming(CHANNEL_LIVE_TRACKING_TIMEOUT, CHANNEL_LIVE_TRACKING_REMAINING, event,
                         COMMAND_LIVE_TRACKING);
+                updateControlDiagnostics(CHANNEL_LIVE_TRACKING_PENDING, CHANNEL_LIVE_TRACKING_RECONNECTING,
+                        CHANNEL_LIVE_TRACKING_STARTED_AT, event, COMMAND_LIVE_TRACKING);
                 scheduleOrCancelAutoOff(CHANNEL_LIVE_TRACKING, CHANNEL_LIVE_TRACKING_REMAINING, event,
                         COMMAND_LIVE_TRACKING);
                 updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE);
@@ -878,6 +884,32 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
+     * Sets or actively clears a String Thing property from a JSON field.
+     */
+    private void putOrClearStringProperty(String key, JsonObject json, String field) {
+        updateProperty(key,
+                json.has(field) && !json.get(field).isJsonNull() && json.get(field).isJsonPrimitive()
+                        ? json.get(field).getAsString()
+                        : null);
+    }
+
+    /** Joined-array counterpart to {@link #putOrClearStringProperty} -- see its javadoc. */
+    private void putOrClearJoinedArrayProperty(String key, JsonObject json, String field) {
+        if (!json.has(field) || !json.get(field).isJsonArray()) {
+            updateProperty(key, null);
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (JsonElement el : json.get(field).getAsJsonArray()) {
+            if (sb.length() > 0) {
+                sb.append(",");
+            }
+            sb.append(el.getAsString());
+        }
+        updateProperty(key, sb.toString());
+    }
+
+    /**
      * Updates {@link #CHANNEL_BATTERY_SAVE_MODE} from a {@code tracker/{trackerId}} payload -- from either the
      * device-info poll (via {@link #applyTrackerDetails}) or the response to a {@link #setBatterySaveMode} write.
      * No-ops if the field is absent or JSON null.
@@ -895,7 +927,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * response is already in flight, so the cache is left untouched.
      */
     protected void pollHwReport(TractiveAccountHandler bridge) {
-        if (!isLinked(CHANNEL_BATTERY_LEVEL)) {
+        if (!isLinked(CHANNEL_BATTERY_LEVEL) && !isLinked(CHANNEL_TEMPERATURE_STATE)) {
             return;
         }
         PollGuard.AcquireResult result = hwReportGuard.tryAcquire();
@@ -1088,6 +1120,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             updateState(CHANNEL_POSITION_ACCURACY,
                     new QuantityType<>(json.get(uncertaintyField).getAsDouble(), SIUnits.METRE));
         }
+        updateStringChannel(CHANNEL_NEARBY_USER_ID, json, FIELD_NEARBY_USER_ID);
     }
 
     /**
@@ -1109,6 +1142,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 && !json.get(FIELD_BATTERY_LEVEL).isJsonNull()) {
             updateState(CHANNEL_BATTERY_LEVEL, new DecimalType(json.get(FIELD_BATTERY_LEVEL).getAsInt()));
         }
+        updateStringChannel(CHANNEL_TEMPERATURE_STATE, json, FIELD_TEMPERATURE_STATE);
     }
 
     /**
@@ -1208,6 +1242,34 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
+     * Updates a command's {@code pending}/{@code reconnecting}/{@code started_at} diagnostic channels from its
+     * nested control object ({@code led_control}/{@code buzzer_control}/{@code live_tracking}) in a
+     * {@code tracker_status} push. Real-time-channel-only, same reasoning as {@link #updateControlTiming}.
+     * {@code reconnecting} has been {@code false} in every real capture taken so far, so its meaning is unconfirmed;
+     * {@code started_at} is only present while {@code active} is {@code true}.
+     */
+    protected void updateControlDiagnostics(String pendingChannelId, String reconnectingChannelId,
+            String startedAtChannelId, JsonObject event, String field) {
+        if (!event.has(field) || !event.get(field).isJsonObject()) {
+            return;
+        }
+        JsonObject control = event.get(field).getAsJsonObject();
+        if (isLinked(pendingChannelId)) {
+            JsonElement pending = control.get(FIELD_PENDING);
+            if (pending != null && !pending.isJsonNull()) {
+                updateState(pendingChannelId, OnOffType.from(pending.getAsBoolean()));
+            }
+        }
+        if (isLinked(reconnectingChannelId)) {
+            JsonElement reconnecting = control.get(FIELD_RECONNECTING);
+            if (reconnecting != null && !reconnecting.isJsonNull()) {
+                updateState(reconnectingChannelId, OnOffType.from(reconnecting.getAsBoolean()));
+            }
+        }
+        updateEpochChannel(startedAtChannelId, control, FIELD_STARTED_AT);
+    }
+
+    /**
      * Reacts to an explicit command-timeout push from Tractive's cloud by forcing the relevant command switch back to
      * OFF -- confirmed only for "an ON attempt timed out"; a failed OFF doesn't appear to produce this message at all,
      * queuing instead (see {@link #scheduleOrCancelAutoOff}). {@code start_failed} never carries a control object
@@ -1251,6 +1313,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * {@code lim}/{@code ribcage}'s unit is assumed to match {@code details.height}'s convention (metres); this is
      * unconfirmed, since both have been {@code null} in every capture taken so far -- as plain properties, they're
      * recorded as unitless numeric strings.
+     *
+     * {@code is_walk_sharing_consent_provided} is account-dependent (present only for a shared/invited account, absent
+     * (not null) for the pet's own owner account) -- handled, along with nine similarly account-dependent
+     * {@code details}/{@code details.activity_settings} fields (a diffed shared- vs. owner-account capture of this
+     * same endpoint showed the keys themselves absent, not merely {@code null}), by
+     * {@link #putOrClearStringProperty}/{@link #putOrClearJoinedArrayProperty} -- unlike {@link #putStringProperty}
+     * etc., these actively clear the property via {@code updateProperty(key, null)} if the bridge's account is ever
+     * changed on an existing Thing, rather than leaving a stale value from the prior account.
      */
     protected void applyProfile(JsonObject json) {
         logger.trace("Applying profile: {}", json);
@@ -1262,7 +1332,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         stateDescriptionProvider.setReadOnly(new ChannelUID(thing.getUID(), CHANNEL_HEIGHT), petReadOnly);
         stateDescriptionProvider.setReadOnly(new ChannelUID(thing.getUID(), CHANNEL_WEIGHT), petReadOnly);
         putEpochStringProperty(props, PROPERTY_PROFILE_CREATED_AT, json, FIELD_CREATED_AT);
-        putStringProperty(props, PROPERTY_WALK_SHARING_CONSENT, json, FIELD_IS_WALK_SHARING_CONSENT_PROVIDED);
+        putOrClearStringProperty(PROPERTY_WALK_SHARING_CONSENT, json, FIELD_IS_WALK_SHARING_CONSENT_PROVIDED);
         if (json.has(FIELD_DETAILS) && json.get(FIELD_DETAILS).isJsonObject()) {
             JsonObject details = json.get(FIELD_DETAILS).getAsJsonObject();
             putStringProperty(props, PROPERTY_GENDER, details, FIELD_GENDER);
@@ -1284,6 +1354,22 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             putStringProperty(props, PROPERTY_HEIGHT_IS_DEFAULT, details, FIELD_HEIGHT_IS_DEFAULT);
             putStringProperty(props, PROPERTY_PROFILE_PICTURE_ID, details, FIELD_PROFILE_PICTURE_ID);
             putJoinedArrayProperty(props, PROPERTY_GALLERY_PICTURE_IDS, details, FIELD_GALLERY_PICTURE_IDS);
+            putOrClearStringProperty(PROPERTY_LENGTH, details, FIELD_LENGTH);
+            putOrClearJoinedArrayProperty(PROPERTY_PERSONALITY, details, FIELD_PERSONALITY);
+            putOrClearStringProperty(PROPERTY_LOST_OR_DEAD, details, FIELD_LOST_OR_DEAD);
+            putOrClearStringProperty(PROPERTY_BIRTHDAY_IS_DEFAULT, details, FIELD_BIRTHDAY_IS_DEFAULT);
+            putOrClearStringProperty(PROPERTY_BREED_IS_DEFAULT, details, FIELD_BREED_IS_DEFAULT);
+            JsonObject activitySettings = details.has(FIELD_ACTIVITY_SETTINGS)
+                    && details.get(FIELD_ACTIVITY_SETTINGS).isJsonObject()
+                            ? details.get(FIELD_ACTIVITY_SETTINGS).getAsJsonObject()
+                            : new JsonObject();
+            putOrClearStringProperty(PROPERTY_ACTIVITY_DAILY_GOAL, activitySettings, FIELD_DAILY_GOAL);
+            putOrClearStringProperty(PROPERTY_ACTIVITY_DAILY_DISTANCE_GOAL, activitySettings,
+                    FIELD_DAILY_DISTANCE_GOAL);
+            putOrClearStringProperty(PROPERTY_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE, activitySettings,
+                    FIELD_ACTIVITY_CATEGORY_THRESHOLDS_OVERRIDE);
+            putOrClearStringProperty(PROPERTY_ACTIVITY_DAILY_MINUTES_GOAL_IS_DEFAULT, activitySettings,
+                    FIELD_DAILY_ACTIVE_MINUTES_GOAL_IS_DEFAULT);
         }
         if (isLinked(CHANNEL_HOME_LOCATION) && json.has(FIELD_HOME_LOCATION)
                 && json.get(FIELD_HOME_LOCATION).isJsonArray()) {
