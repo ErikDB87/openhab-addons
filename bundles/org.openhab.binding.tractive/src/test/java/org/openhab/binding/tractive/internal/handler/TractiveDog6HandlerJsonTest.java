@@ -195,6 +195,49 @@ class TractiveDog6HandlerJsonTest {
     }
 
     @Test
+    void updateControlDiagnosticsMissingStartedAtSetsStartedAtChannelToNull() {
+        JsonObject control = new JsonObject();
+        control.addProperty(TractiveBindingConstants.FIELD_ACTIVE, false);
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.COMMAND_BUZZER_CONTROL, control);
+
+        Map<String, State> updates = captureUpdates(() -> handler.updateControlDiagnostics(
+                TractiveBindingConstants.CHANNEL_BUZZER_PENDING, TractiveBindingConstants.CHANNEL_BUZZER_RECONNECTING,
+                TractiveBindingConstants.CHANNEL_BUZZER_STARTED_AT, event,
+                TractiveBindingConstants.COMMAND_BUZZER_CONTROL));
+
+        assertEquals(UnDefType.NULL, updates.get("commands#buzzer-started-at"));
+    }
+
+    @Test
+    void updateControlDiagnosticsExplicitNullStartedAtSetsStartedAtChannelToNull() {
+        JsonObject control = new JsonObject();
+        control.addProperty(TractiveBindingConstants.FIELD_ACTIVE, false);
+        control.add(TractiveBindingConstants.FIELD_STARTED_AT, JsonNull.INSTANCE);
+        JsonObject event = new JsonObject();
+        event.add(TractiveBindingConstants.COMMAND_BUZZER_CONTROL, control);
+
+        Map<String, State> updates = captureUpdates(() -> handler.updateControlDiagnostics(
+                TractiveBindingConstants.CHANNEL_BUZZER_PENDING, TractiveBindingConstants.CHANNEL_BUZZER_RECONNECTING,
+                TractiveBindingConstants.CHANNEL_BUZZER_STARTED_AT, event,
+                TractiveBindingConstants.COMMAND_BUZZER_CONTROL));
+
+        assertEquals(UnDefType.NULL, updates.get("commands#buzzer-started-at"));
+    }
+
+    @Test
+    void updateControlDiagnosticsAbsentControlObjectLeavesStartedAtUntouched() {
+        JsonObject event = new JsonObject();
+
+        handler.updateControlDiagnostics(TractiveBindingConstants.CHANNEL_BUZZER_PENDING,
+                TractiveBindingConstants.CHANNEL_BUZZER_RECONNECTING,
+                TractiveBindingConstants.CHANNEL_BUZZER_STARTED_AT, event,
+                TractiveBindingConstants.COMMAND_BUZZER_CONTROL);
+
+        verify(callback, never()).stateUpdated(any(ChannelUID.class), any(State.class));
+    }
+
+    @Test
     void applyPositionReportUpdatesAllPositionChannels() {
         JsonObject json = new JsonObject();
         JsonArray latlong = new JsonArray();
@@ -207,6 +250,9 @@ class TractiveDog6HandlerJsonTest {
         json.addProperty(TractiveBindingConstants.FIELD_SENSOR_USED, "GPS");
         json.addProperty(TractiveBindingConstants.FIELD_POS_UNCERTAINTY, 8);
         json.addProperty(TractiveBindingConstants.FIELD_NEARBY_USER_ID, "65eeb9406e8687af338e3952");
+        JsonArray posStatus = new JsonArray();
+        posStatus.add("STATIONARY_FIX");
+        json.add(TractiveBindingConstants.FIELD_POS_STATUS, posStatus);
 
         Map<String, State> updates = captureUpdates(() -> handler.applyPositionReport(json));
 
@@ -219,6 +265,56 @@ class TractiveDog6HandlerJsonTest {
         assertEquals(new StringType("GPS"), updates.get("position#sensor-used"));
         assertInstanceOf(QuantityType.class, updates.get("position#position-accuracy"));
         assertEquals(new StringType("65eeb9406e8687af338e3952"), updates.get("position#nearby-user-id"));
+        assertEquals(new StringType("STATIONARY_FIX"), updates.get("position#position-status"));
+    }
+
+    @Test
+    void applyPositionReportExplicitNullPosStatusSetsChannelToNull() {
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_POS_STATUS, JsonNull.INSTANCE);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyPositionReport(json));
+
+        assertEquals(UnDefType.NULL, updates.get(TractiveBindingConstants.CHANNEL_POSITION_STATUS));
+    }
+
+    @Test
+    void applyPositionReportAbsentPosStatusLeavesChannelUntouched() {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_SENSOR_USED, "GPS");
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyPositionReport(json));
+
+        assertFalse(updates.containsKey(TractiveBindingConstants.CHANNEL_POSITION_STATUS));
+    }
+
+    @Test
+    void applyPositionReportPosStatusFollowedByNullEndsAtNull() {
+        JsonArray flags = new JsonArray();
+        flags.add("STATIONARY_FIX");
+        JsonObject first = new JsonObject();
+        first.addProperty(TractiveBindingConstants.FIELD_TIME, 1784832952L);
+        first.add(TractiveBindingConstants.FIELD_POS_STATUS, flags);
+        JsonObject second = new JsonObject();
+        second.addProperty(TractiveBindingConstants.FIELD_TIME, 1784832960L);
+        second.add(TractiveBindingConstants.FIELD_POS_STATUS, JsonNull.INSTANCE);
+
+        Map<String, State> updates = captureUpdates(() -> {
+            handler.applyPositionReport(first);
+            handler.applyPositionReport(second);
+        });
+
+        assertEquals(UnDefType.NULL, updates.get(TractiveBindingConstants.CHANNEL_POSITION_STATUS));
+    }
+
+    @Test
+    void applyPositionReportExplicitNullNearbyUserIdSetsChannelToNull() {
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_NEARBY_USER_ID, JsonNull.INSTANCE);
+
+        Map<String, State> updates = captureUpdates(() -> handler.applyPositionReport(json));
+
+        assertEquals(UnDefType.NULL, updates.get(TractiveBindingConstants.CHANNEL_NEARBY_USER_ID));
     }
 
     @Test
@@ -262,6 +358,29 @@ class TractiveDog6HandlerJsonTest {
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_TEMPERATURE_STATE)),
                 eq(new StringType("SOME_VALUE")));
+    }
+
+    @Test
+    void applyHwReportUpdatesClipMountedState() {
+        JsonObject json = new JsonObject();
+        json.addProperty(TractiveBindingConstants.FIELD_CLIP_MOUNTED_STATE, "SOME_VALUE");
+
+        handler.applyHwReport(json);
+
+        verify(callback).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_CLIP_MOUNTED_STATE)),
+                eq(new StringType("SOME_VALUE")));
+    }
+
+    @Test
+    void applyHwReportExplicitNullClipMountedStateSetsChannelToNull() {
+        JsonObject json = new JsonObject();
+        json.add(TractiveBindingConstants.FIELD_CLIP_MOUNTED_STATE, JsonNull.INSTANCE);
+
+        handler.applyHwReport(json);
+
+        verify(callback).stateUpdated(
+                eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_CLIP_MOUNTED_STATE)), eq(UnDefType.NULL));
     }
 
     @Test
@@ -1111,6 +1230,56 @@ class TractiveDog6HandlerJsonTest {
         handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 0.0, null));
 
         verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), any(TimeUnit.class));
+    }
+
+    @Test
+    void buzzerActiveWithZeroRemainingReportsSwitchOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, buzzerControlEvent(true, 0.0, null));
+
+        ChannelUID buzzer = new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER);
+        verify(callback).stateUpdated(eq(buzzer), eq(OnOffType.OFF));
+        verify(callback, never()).stateUpdated(eq(buzzer), eq(OnOffType.ON));
+    }
+
+    @Test
+    void ledActiveWithZeroRemainingReportsSwitchOff() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, ledControlEvent(true, 0.0, null));
+
+        ChannelUID led = new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LED);
+        verify(callback).stateUpdated(eq(led), eq(OnOffType.OFF));
+        verify(callback, never()).stateUpdated(eq(led), eq(OnOffType.ON));
+    }
+
+    @Test
+    void liveTrackingActiveWithZeroRemainingStaysOn() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS,
+                liveTrackingControlEvent(true, 0.0, null));
+
+        ChannelUID liveTracking = new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_LIVE_TRACKING);
+        verify(callback).stateUpdated(eq(liveTracking), eq(OnOffType.ON));
+        verify(callback, never()).stateUpdated(eq(liveTracking), eq(OnOffType.OFF));
+    }
+
+    @Test
+    void buzzerActiveWithZeroRemainingButQueuedCommandStaysOn() {
+        JsonObject event = buzzerControlEvent(true, 0.0, null);
+        event.getAsJsonObject(TractiveBindingConstants.COMMAND_BUZZER_CONTROL)
+                .addProperty(TractiveBindingConstants.FIELD_PENDING, true);
+
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event);
+
+        ChannelUID buzzer = new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER);
+        verify(callback).stateUpdated(eq(buzzer), eq(OnOffType.ON));
+        verify(callback, never()).stateUpdated(eq(buzzer), eq(OnOffType.OFF));
+    }
+
+    @Test
+    void buzzerActiveWithTimeRemainingStaysOn() {
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, buzzerControlEvent(true, 5.0, null));
+
+        ChannelUID buzzer = new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER);
+        verify(callback).stateUpdated(eq(buzzer), eq(OnOffType.ON));
+        verify(callback, never()).stateUpdated(eq(buzzer), eq(OnOffType.OFF));
     }
 
     @Test

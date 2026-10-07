@@ -60,6 +60,7 @@ import org.openhab.core.thing.ThingStatus;
 import org.openhab.core.thing.ThingStatusDetail;
 import org.openhab.core.thing.ThingStatusInfo;
 import org.openhab.core.thing.binding.BaseThingHandler;
+import org.openhab.core.types.UnDefType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -126,7 +127,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     private volatile long lastContactUpdateMs;
 
     private static final String[] POSITION_GROUP_CHANNEL_IDS = { CHANNEL_LOCATION, CHANNEL_LAST_POSITION_TIME,
-            CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY, CHANNEL_NEARBY_USER_ID };
+            CHANNEL_SPEED, CHANNEL_SENSOR_USED, CHANNEL_POSITION_ACCURACY, CHANNEL_NEARBY_USER_ID,
+            CHANNEL_POSITION_STATUS };
 
     protected final TractiveStateDescriptionProvider stateDescriptionProvider;
 
@@ -149,7 +151,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         switch (messageType) {
             case MESSAGE_TRACKER_STATUS:
                 updatePowerSavingFlag(event, FIELD_TRACKER_STATE_REASON);
-                updateStringChannel(CHANNEL_TRACKER_STATE_REASON, event, FIELD_TRACKER_STATE_REASON);
+                updateStringChannel(CHANNEL_TRACKER_STATE_REASON, event, FIELD_TRACKER_STATE_REASON, true);
                 applyControlState(CHANNEL_LED, event, COMMAND_LED_CONTROL);
                 applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
                 updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
@@ -167,9 +169,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                         CHANNEL_LIVE_TRACKING_STARTED_AT, event, COMMAND_LIVE_TRACKING);
                 scheduleOrCancelAutoOff(CHANNEL_LIVE_TRACKING, CHANNEL_LIVE_TRACKING_REMAINING, event,
                         COMMAND_LIVE_TRACKING);
-                updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE);
-                updateStringChannel(CHANNEL_CHARGING_STATE, event, FIELD_CHARGING_STATE);
-                updateStringChannel(CHANNEL_BATTERY_STATE, event, FIELD_BATTERY_STATE);
+                updateStringChannel(CHANNEL_TRACKER_STATE, event, FIELD_TRACKER_STATE_LIVE, true);
+                updateStringChannel(CHANNEL_CHARGING_STATE, event, FIELD_CHARGING_STATE, true);
+                updateStringChannel(CHANNEL_BATTERY_STATE, event, FIELD_BATTERY_STATE, true);
                 applyPowerSavingZoneId(event);
                 applyPrioritizedZone(event);
                 if (event.has(FIELD_POSITION) && event.get(FIELD_POSITION).isJsonObject()) {
@@ -802,16 +804,16 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         if (trackerDetailsGuard.getCached() != null) {
             return;
         }
-        updateStringChannel(CHANNEL_TRACKER_STATE, json, FIELD_TRACKER_STATE);
-        updateStringChannel(CHANNEL_CHARGING_STATE, json, FIELD_CHARGING_STATE);
-        updateStringChannel(CHANNEL_BATTERY_STATE, json, FIELD_BATTERY_STATE);
-        updateStringChannel(CHANNEL_TRACKER_STATE_REASON, json, FIELD_STATE_REASON);
-        updateStringChannel(CHANNEL_ZONE_ID, json, FIELD_PRIORITIZED_ZONE_ID);
-        updateStringChannel(CHANNEL_ZONE_TYPE, json, FIELD_PRIORITIZED_ZONE_TYPE);
+        updateStringChannel(CHANNEL_TRACKER_STATE, json, FIELD_TRACKER_STATE, false);
+        updateStringChannel(CHANNEL_CHARGING_STATE, json, FIELD_CHARGING_STATE, false);
+        updateStringChannel(CHANNEL_BATTERY_STATE, json, FIELD_BATTERY_STATE, false);
+        updateStringChannel(CHANNEL_TRACKER_STATE_REASON, json, FIELD_STATE_REASON, false);
+        updateStringChannel(CHANNEL_ZONE_ID, json, FIELD_PRIORITIZED_ZONE_ID, false);
+        updateStringChannel(CHANNEL_ZONE_TYPE, json, FIELD_PRIORITIZED_ZONE_TYPE, false);
 
         updateEpochChannel(CHANNEL_ZONE_LAST_SEEN_AT, json, FIELD_PRIORITIZED_ZONE_LAST_SEEN_AT);
         updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, json, FIELD_PRIORITIZED_ZONE_ENTERED_AT);
-        updateStringChannel(CHANNEL_POWER_SAVING_ZONE_ID, json, FIELD_POWER_SAVING_ZONE_ID);
+        updateStringChannel(CHANNEL_POWER_SAVING_ZONE_ID, json, FIELD_POWER_SAVING_ZONE_ID, false);
     }
 
     /**
@@ -927,7 +929,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * response is already in flight, so the cache is left untouched.
      */
     protected void pollHwReport(TractiveAccountHandler bridge) {
-        if (!isLinked(CHANNEL_BATTERY_LEVEL) && !isLinked(CHANNEL_TEMPERATURE_STATE)) {
+        if (!isLinked(CHANNEL_BATTERY_LEVEL) && !isLinked(CHANNEL_TEMPERATURE_STATE)
+                && !isLinked(CHANNEL_CLIP_MOUNTED_STATE)) {
             return;
         }
         PollGuard.AcquireResult result = hwReportGuard.tryAcquire();
@@ -1113,14 +1116,15 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 }
             }
         }
-        updateStringChannel(CHANNEL_SENSOR_USED, json, FIELD_SENSOR_USED);
+        updateStringChannel(CHANNEL_SENSOR_USED, json, FIELD_SENSOR_USED, true);
         String uncertaintyField = json.has(FIELD_POS_UNCERTAINTY) ? FIELD_POS_UNCERTAINTY : FIELD_ACCURACY;
         if (isLinked(CHANNEL_POSITION_ACCURACY) && json.has(uncertaintyField)
                 && !json.get(uncertaintyField).isJsonNull()) {
             updateState(CHANNEL_POSITION_ACCURACY,
                     new QuantityType<>(json.get(uncertaintyField).getAsDouble(), SIUnits.METRE));
         }
-        updateStringChannel(CHANNEL_NEARBY_USER_ID, json, FIELD_NEARBY_USER_ID);
+        updateStringChannel(CHANNEL_NEARBY_USER_ID, json, FIELD_NEARBY_USER_ID, true);
+        updateJoinedArrayChannel(CHANNEL_POSITION_STATUS, json, FIELD_POS_STATUS);
     }
 
     /**
@@ -1142,7 +1146,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 && !json.get(FIELD_BATTERY_LEVEL).isJsonNull()) {
             updateState(CHANNEL_BATTERY_LEVEL, new DecimalType(json.get(FIELD_BATTERY_LEVEL).getAsInt()));
         }
-        updateStringChannel(CHANNEL_TEMPERATURE_STATE, json, FIELD_TEMPERATURE_STATE);
+        updateStringChannel(CHANNEL_TEMPERATURE_STATE, json, FIELD_TEMPERATURE_STATE, true);
+        updateStringChannel(CHANNEL_CLIP_MOUNTED_STATE, json, FIELD_CLIP_MOUNTED_STATE, true);
     }
 
     /**
@@ -1161,15 +1166,32 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * Updates a Switch channel from a nested tracker_status control object's "active" field
      * (led_control/buzzer_control/live_tracking) — the only confirmed source of real device
      * state for the three command switches; the synchronous command response is not reliable.
+     *
+     * A buzzer or LED whose time has run out is still reported as {@code active: true} for one more push, with
+     * {@code remaining} at 0, so that combination is treated as OFF (see {@link #isTimedOut}).
      */
     protected void applyControlState(String channelId, JsonObject event, String field) {
         if (!isLinked(channelId) || !event.has(field) || !event.get(field).isJsonObject()) {
             return;
         }
-        JsonElement active = event.get(field).getAsJsonObject().get(FIELD_ACTIVE);
+        JsonObject control = event.get(field).getAsJsonObject();
+        JsonElement active = control.get(FIELD_ACTIVE);
         if (active != null && !active.isJsonNull()) {
-            updateState(channelId, OnOffType.from(active.getAsBoolean()));
+            updateState(channelId, OnOffType.from(active.getAsBoolean() && !isTimedOut(control, field)));
         }
+    }
+
+    /**
+     * Whether a buzzer or LED control object has run out of time: {@code remaining} is 0 and no command is queued.
+     * Live tracking is exempt, and so is any object with {@code pending: true}, since that is the echo of a queued
+     * command rather than a status report.
+     */
+    private boolean isTimedOut(JsonObject control, String field) {
+        JsonElement remaining = control.get(FIELD_REMAINING);
+        JsonElement pending = control.get(FIELD_PENDING);
+        boolean commandQueued = pending != null && !pending.isJsonNull() && pending.getAsBoolean();
+        return !COMMAND_LIVE_TRACKING.equals(field) && remaining != null && !remaining.isJsonNull()
+                && remaining.getAsDouble() <= 0 && !commandQueued;
     }
 
     /**
@@ -1187,8 +1209,8 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         JsonObject zone = event.get(FIELD_PRIORITIZED_ZONE).getAsJsonObject();
-        updateStringChannel(CHANNEL_ZONE_ID, zone, FIELD_ID);
-        updateStringChannel(CHANNEL_ZONE_TYPE, zone, FIELD_ZONE_TYPE);
+        updateStringChannel(CHANNEL_ZONE_ID, zone, FIELD_ID, true);
+        updateStringChannel(CHANNEL_ZONE_TYPE, zone, FIELD_ZONE_TYPE, true);
         updateEpochChannel(CHANNEL_ZONE_ENTERED_AT, zone, FIELD_ZONE_ENTERED_AT);
     }
 
@@ -1246,7 +1268,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * nested control object ({@code led_control}/{@code buzzer_control}/{@code live_tracking}) in a
      * {@code tracker_status} push. Real-time-channel-only, same reasoning as {@link #updateControlTiming}.
      * {@code reconnecting} has been {@code false} in every real capture taken so far, so its meaning is unconfirmed;
-     * {@code started_at} is only present while {@code active} is {@code true}.
+     * {@code started_at} is only present while {@code active} is {@code true}. When the control object is present
+     * without it (or with an explicit null), the {@code started_at} channel is set to {@link UnDefType#NULL} so a
+     * finished activation's start time doesn't linger.
      */
     protected void updateControlDiagnostics(String pendingChannelId, String reconnectingChannelId,
             String startedAtChannelId, JsonObject event, String field) {
@@ -1266,7 +1290,14 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                 updateState(reconnectingChannelId, OnOffType.from(reconnecting.getAsBoolean()));
             }
         }
-        updateEpochChannel(startedAtChannelId, control, FIELD_STARTED_AT);
+        if (isLinked(startedAtChannelId)) {
+            JsonElement startedAt = control.get(FIELD_STARTED_AT);
+            if (startedAt == null || startedAt.isJsonNull()) {
+                updateState(startedAtChannelId, UnDefType.NULL);
+            } else {
+                updateEpochChannel(startedAtChannelId, control, FIELD_STARTED_AT);
+            }
+        }
     }
 
     /**
@@ -1385,20 +1416,26 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Updates a String channel from a JSON array field by joining its elements with commas.
+     * Updates a String channel from a JSON array field by joining its elements with commas. An explicit JSON null
+     * sets the channel to {@link UnDefType#NULL}; an absent field leaves it untouched.
      */
     protected void updateJoinedArrayChannel(String channelId, JsonObject json, String field) {
-        if (!isLinked(channelId) || !json.has(field) || !json.get(field).isJsonArray()) {
+        JsonElement el = json.get(field);
+        if (el == null || !isLinked(channelId)) {
             return;
         }
-        StringBuilder sb = new StringBuilder();
-        for (JsonElement el : json.get(field).getAsJsonArray()) {
-            if (sb.length() > 0) {
-                sb.append(",");
+        if (el.isJsonNull()) {
+            updateState(channelId, UnDefType.NULL);
+        } else if (el.isJsonArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonElement item : el.getAsJsonArray()) {
+                if (sb.length() > 0) {
+                    sb.append(",");
+                }
+                sb.append(item.getAsString());
             }
-            sb.append(el.getAsString());
+            updateState(channelId, new StringType(sb.toString()));
         }
-        updateState(channelId, new StringType(sb.toString()));
     }
 
     /**
@@ -1449,8 +1486,18 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      */
     @Override
     public void onSubscriptionUpdate(JsonObject subscription) {
-        updateStringChannel(CHANNEL_SUBSCRIPTION_STATUS, subscription, FIELD_STATUS);
+        updateStringChannel(CHANNEL_SUBSCRIPTION_STATUS, subscription, FIELD_STATUS, true);
         updateEpochChannel(CHANNEL_SUBSCRIPTION_VALID_TO, subscription, FIELD_VALID_TO);
+    }
+
+    /**
+     * The real-time channel doesn't replay what was pushed while it was down, so one REST poll recovers the state the
+     * tracker reported in the meantime. Runs on the scheduler, not the channel's reader thread, and goes through the
+     * same {@link PollGuard}s and shared rate-limit bucket as every other poll.
+     */
+    @Override
+    public void onChannelReconnected() {
+        taskTracker.track(scheduler.schedule(this::pollAll, 0, TimeUnit.SECONDS));
     }
 
     /**
@@ -1541,14 +1588,19 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     }
 
     /**
-     * Updates a String channel from a JSON field; no-ops if the field is absent or JSON null.
+     * Updates a String channel from a JSON field; no-ops if the field is absent. A JSON null sets the channel to
+     * {@link UnDefType#NULL} if {@code nullClears}, so a stale value doesn't outlive the report that cleared it, and
+     * is ignored otherwise.
      */
-    protected void updateStringChannel(String channelId, JsonObject json, String field) {
-        if (isLinked(channelId)) {
-            JsonElement el = json.get(field);
-            if (el != null && !el.isJsonNull()) {
-                updateState(channelId, new StringType(el.getAsString()));
-            }
+    protected void updateStringChannel(String channelId, JsonObject json, String field, boolean nullClears) {
+        JsonElement el = json.get(field);
+        if (el == null || !isLinked(channelId)) {
+            return;
+        }
+        if (!el.isJsonNull()) {
+            updateState(channelId, new StringType(el.getAsString()));
+        } else if (nullClears) {
+            updateState(channelId, UnDefType.NULL);
         }
     }
 

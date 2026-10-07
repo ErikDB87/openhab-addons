@@ -77,14 +77,22 @@ public class TractiveBindingConstants {
      * BLE-near the tracker at that moment.
      */
     public static final String CHANNEL_NEARBY_USER_ID = "position#nearby-user-id";
+    /**
+     * Channel ID for fix-quality flags accompanying a position fix (e.g. {@code STATIONARY_FIX}), joined into one
+     * comma-separated string.
+     */
+    public static final String CHANNEL_POSITION_STATUS = "position#position-status";
 
     /** Channel ID for battery level percentage; kept live by the real-time channel, backstopped by REST polling. */
     public static final String CHANNEL_BATTERY_LEVEL = "hardware#battery-level";
     /**
-     * Channel ID for a hardware temperature-related state; always {@code null} in every capture taken so far, so
-     * its meaning remains unresolved.
+     * Channel ID for a hardware temperature-related state.
      */
     public static final String CHANNEL_TEMPERATURE_STATE = "hardware#temperature-state";
+    /**
+     * Channel ID for whether the tracker is physically clipped into its collar mount.
+     */
+    public static final String CHANNEL_CLIP_MOUNTED_STATE = "hardware#clip-mounted-state";
     /**
      * Channel ID for the tracker's charging state (e.g. {@code NOT_CHARGING}). Lives in the {@code tracker-status}
      * group, not {@code hardware} -- see {@link #CHANNEL_TRACKER_STATE} for why.
@@ -558,6 +566,8 @@ public class TractiveBindingConstants {
      * channel.
      */
     public static final String FIELD_NEARBY_USER_ID = "nearby_user_id";
+    /** JSON field name for fix-quality flags on a REST position fix (e.g. STATIONARY_FIX), an array of strings. */
+    public static final String FIELD_POS_STATUS = "pos_status";
 
     /** JSON field name for battery level as a 0-100 integer. */
     public static final String FIELD_BATTERY_LEVEL = "battery_level";
@@ -566,6 +576,11 @@ public class TractiveBindingConstants {
      * real-time channel's nested {@code hardware} object.
      */
     public static final String FIELD_TEMPERATURE_STATE = "temperature_state";
+    /**
+     * JSON field name for whether the tracker is physically clipped into its collar mount, in REST's
+     * {@code device_hw_report}.
+     */
+    public static final String FIELD_CLIP_MOUNTED_STATE = "clip_mounted_state";
     /** JSON field name for the tracker's operational state in REST responses. */
     public static final String FIELD_TRACKER_STATE = "state";
     /**

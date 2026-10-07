@@ -54,13 +54,18 @@ public class TractiveChannelListener {
 
     private final Logger logger = LoggerFactory.getLogger(TractiveChannelListener.class);
     private final Consumer<JsonObject> eventConsumer;
+    private final Runnable onConnected;
     private final AtomicLong lastKeepAliveMs = new AtomicLong(System.currentTimeMillis());
 
     /**
      * Creates a channel listener that parses NDJSON lines and forwards data events to the given consumer.
+     *
+     * @param eventConsumer receives every data event
+     * @param onConnected called each time the server's {@code handshake} line arrives, i.e. once per (re)connect
      */
-    public TractiveChannelListener(Consumer<JsonObject> eventConsumer) {
+    public TractiveChannelListener(Consumer<JsonObject> eventConsumer, Runnable onConnected) {
         this.eventConsumer = eventConsumer;
+        this.onConnected = onConnected;
     }
 
     /**
@@ -126,6 +131,7 @@ public class TractiveChannelListener {
                 return;
             }
             if (MESSAGE_HANDSHAKE.equals(message)) {
+                onConnected.run();
                 return;
             }
             eventConsumer.accept(json);
