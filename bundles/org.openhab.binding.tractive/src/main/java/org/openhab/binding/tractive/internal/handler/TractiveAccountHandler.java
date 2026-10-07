@@ -88,6 +88,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private volatile @Nullable TractiveAccountConfiguration config;
     private long expiresAt;
     private long channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
+    private volatile boolean channelConnectedBefore;
     private long bridgeAuthRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
     private long tokenRefreshRetryDelaySeconds = RECONNECT_INITIAL_DELAY_S;
     private int consecutiveTokenRefreshFailures;
@@ -279,7 +280,8 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     }
 
     private void startChannelLoop() {
-        TractiveChannelListener channelListener = new TractiveChannelListener(this::dispatchChannelEvent);
+        TractiveChannelListener channelListener = new TractiveChannelListener(this::dispatchChannelEvent,
+                this::onChannelConnected);
         scheduleChannelConnect(channelListener, 0);
     }
 
@@ -322,6 +324,22 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
                 scheduleChannelConnect(channelListener, nextDelay);
             }
         }, delaySeconds, TimeUnit.SECONDS));
+    }
+
+    /**
+     * Called on every channel {@code handshake}. The first one is the initial connect, which the tracker handlers
+     * already cover with their own startup poll; every later one is a reconnect, so every listener is told to catch
+     * up on whatever was pushed while the stream was down.
+     */
+    private void onChannelConnected() {
+        if (!channelConnectedBefore) {
+            channelConnectedBefore = true;
+            return;
+        }
+        logger.debug("Real-time channel reconnected, asking {} listener(s) to catch up", eventListeners.size());
+        for (TractiveEventListener listener : eventListeners) {
+            listener.onChannelReconnected();
+        }
     }
 
     private void dispatchChannelEvent(JsonObject event) {

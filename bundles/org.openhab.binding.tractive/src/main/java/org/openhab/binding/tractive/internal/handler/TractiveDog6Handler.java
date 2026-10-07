@@ -147,22 +147,22 @@ public class TractiveDog6Handler extends TractiveTrackerHandler {
         }
         if (json.has(FIELD_RESTING_HEART_RATE) && json.get(FIELD_RESTING_HEART_RATE).isJsonObject()) {
             JsonObject rhr = json.get(FIELD_RESTING_HEART_RATE).getAsJsonObject();
-            updateStringChannel(CHANNEL_RESTING_HEART_RATE_STATUS, rhr, FIELD_STATUS);
+            updateStringChannel(CHANNEL_RESTING_HEART_RATE_STATUS, rhr, FIELD_STATUS, true);
             updateIntChannel(CHANNEL_RESTING_HEART_RATE_DAY_OFFSET, rhr, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_RESTING_RESPIRATORY_RATE) && json.get(FIELD_RESTING_RESPIRATORY_RATE).isJsonObject()) {
             JsonObject rrr = json.get(FIELD_RESTING_RESPIRATORY_RATE).getAsJsonObject();
-            updateStringChannel(CHANNEL_RESTING_RESPIRATORY_RATE_STATUS, rrr, FIELD_STATUS);
+            updateStringChannel(CHANNEL_RESTING_RESPIRATORY_RATE_STATUS, rrr, FIELD_STATUS, true);
             updateIntChannel(CHANNEL_RESTING_RESPIRATORY_RATE_DAY_OFFSET, rrr, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_BARK) && json.get(FIELD_BARK).isJsonObject()) {
             JsonObject bark = json.get(FIELD_BARK).getAsJsonObject();
-            updateStringChannel(CHANNEL_BARK, bark, FIELD_STATUS);
+            updateStringChannel(CHANNEL_BARK, bark, FIELD_STATUS, true);
             updateIntChannel(CHANNEL_BARK_DAY_OFFSET, bark, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_SCRATCH) && json.get(FIELD_SCRATCH).isJsonObject()) {
             JsonObject scratch = json.get(FIELD_SCRATCH).getAsJsonObject();
-            updateStringChannel(CHANNEL_SCRATCH, scratch, FIELD_STATUS);
+            updateStringChannel(CHANNEL_SCRATCH, scratch, FIELD_STATUS, true);
             updateIntChannel(CHANNEL_SCRATCH_DAY_OFFSET, scratch, FIELD_DAY_OFFSET);
         }
         if (json.has(FIELD_HEALTH_ALERTS) && json.get(FIELD_HEALTH_ALERTS).isJsonObject()) {

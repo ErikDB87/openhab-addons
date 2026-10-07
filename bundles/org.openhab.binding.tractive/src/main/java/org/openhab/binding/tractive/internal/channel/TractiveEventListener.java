@@ -47,4 +47,10 @@ public interface TractiveEventListener {
      * @param subscription the {@code subscription} object for this tracker ({@code status}, {@code valid_to})
      */
     void onSubscriptionUpdate(JsonObject subscription);
+
+    /**
+     * Called by the bridge each time the real-time channel reconnects after having been connected before, so the
+     * listener can catch up on anything pushed while the stream was down. Not called for the very first connect.
+     */
+    void onChannelReconnected();
 }

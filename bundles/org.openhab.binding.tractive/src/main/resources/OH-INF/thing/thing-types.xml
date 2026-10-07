@@ -73,6 +73,7 @@
 			<channel id="sensor-used" typeId="sensor-used"/>
 			<channel id="position-accuracy" typeId="position-accuracy"/>
 			<channel id="nearby-user-id" typeId="nearby-user-id"/>
+			<channel id="position-status" typeId="position-status"/>
 		</channels>
 	</channel-group-type>
 
@@ -81,6 +82,7 @@
 		<channels>
 			<channel id="battery-level" typeId="system.battery-level"/>
 			<channel id="temperature-state" typeId="temperature-state"/>
+			<channel id="clip-mounted-state" typeId="clip-mounted-state"/>
 		</channels>
 	</channel-group-type>
 
@@ -250,17 +252,28 @@
 	<channel-type id="nearby-user-id" advanced="true">
 		<item-type>String</item-type>
 		<label>Nearby User ID</label>
-		<description>Internal ID of the real Tractive account whose phone is BLE-near the tracker, when known;
-			absent from
-			almost every real position report</description>
+		<description>Internal ID of the real Tractive account whose phone is BLE-near the tracker</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="position-status" advanced="true">
+		<item-type>String</item-type>
+		<label>Position Status</label>
+		<description>Fix-quality flags for the last position fix (e.g. STATIONARY_FIX), comma-separated</description>
 		<state readOnly="true"/>
 	</channel-type>
 
 	<channel-type id="temperature-state" advanced="true">
 		<item-type>String</item-type>
 		<label>Temperature State</label>
-		<description>A hardware temperature-related state; always null in every capture taken so far, meaning
-			unresolved</description>
+		<description>A hardware temperature-related state</description>
+		<state readOnly="true"/>
+	</channel-type>
+
+	<channel-type id="clip-mounted-state" advanced="true">
+		<item-type>String</item-type>
+		<label>Clip Mounted State</label>
+		<description>Reports whether the tracker is physically clipped into its collar mount</description>
 		<state readOnly="true"/>
 	</channel-type>
 

@@ -601,4 +601,48 @@ class TractiveAccountHandlerTest {
 
         verify(lateListener).onSubscriptionUpdate(any());
     }
+
+    // -- onChannelConnected() (private; invoked via reflection) -----------------------------------
+
+    @Test
+    void firstChannelConnectDoesNotNotifyListeners() throws Exception {
+        TractiveEventListener listener = mock(TractiveEventListener.class);
+        handler.registerListener(listener);
+
+        invokeOnChannelConnected();
+
+        verify(listener, never()).onChannelReconnected();
+    }
+
+    @Test
+    void secondChannelConnectNotifiesEveryListenerRegardlessOfTargetIds() throws Exception {
+        TractiveEventListener first = mock(TractiveEventListener.class);
+        TractiveEventListener second = mock(TractiveEventListener.class);
+        handler.registerListener(first);
+        handler.registerListener(second);
+
+        invokeOnChannelConnected();
+        invokeOnChannelConnected();
+
+        verify(first).onChannelReconnected();
+        verify(second).onChannelReconnected();
+    }
+
+    @Test
+    void everyLaterChannelConnectNotifiesAgain() throws Exception {
+        TractiveEventListener listener = mock(TractiveEventListener.class);
+        handler.registerListener(listener);
+
+        invokeOnChannelConnected();
+        invokeOnChannelConnected();
+        invokeOnChannelConnected();
+
+        verify(listener, times(2)).onChannelReconnected();
+    }
+
+    private void invokeOnChannelConnected() throws Exception {
+        Method method = TractiveAccountHandler.class.getDeclaredMethod("onChannelConnected");
+        method.setAccessible(true);
+        method.invoke(handler);
+    }
 }

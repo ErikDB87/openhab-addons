@@ -82,27 +82,33 @@ It's possible (but not verified) that being too aggressive might lead to longer-
 
 ### Group `position`
 
-| Channel ID                    | Type          | R/W | Advanced | Description                                                                               |
-| ----------------------------- | ------------- | --- | -------- | ----------------------------------------------------------------------------------------- |
-| `position#location`           | Location      | R   | No       | Current location (latitude, longitude, altitude)¹                                         |
-| `position#last-position-time` | DateTime      | R   | No       | Timestamp of the last position report¹                                                    |
-| `position#speed`              | Number:Speed  | R   | No       | Speed at the last position report; `null` when the tracker is stationary¹                 |
-| `position#sensor-used`        | String        | R   | Yes      | Positioning sensor: `GPS`, `KNOWN_WIFI`, `PHONE`, or `CELL`¹                              |
-| `position#position-accuracy`  | Number:Length | R   | No       | Estimated position accuracy radius¹                                                       |
-| `position#nearby-user-id`     | String        | R   | Yes      | Internal ID of the real Tractive account whose phone is BLE-near the tracker, when known¹ |
+| Channel ID                    | Type          | R/W | Advanced | Description                                                                              |
+| ----------------------------- | ------------- | --- | -------- | ---------------------------------------------------------------------------------------- |
+| `position#location`           | Location      | R   | No       | Current location (latitude, longitude, altitude)¹                                        |
+| `position#last-position-time` | DateTime      | R   | No       | Timestamp of the last position report¹                                                   |
+| `position#speed`              | Number:Speed  | R   | No       | Speed at the last position report; `null` when the tracker is stationary¹                |
+| `position#sensor-used`        | String        | R   | Yes      | Positioning sensor: `GPS`, `KNOWN_WIFI`, `PHONE`, or `CELL`¹                             |
+| `position#position-accuracy`  | Number:Length | R   | No       | Estimated position accuracy radius¹                                                      |
+| `position#nearby-user-id`     | String        | R   | Yes      | Internal ID of the Tractive account whose phone is BLE-near the tracker; `NULL` if none¹ |
+| `position#position-status`    | String        | R   | Yes      | Fix-quality flags of the last fix (e.g. `STATIONARY_FIX`); `NULL` if none²               |
 
 > **¹** Also updated by the periodic REST poll (`refreshInterval`), as a backstop — but the real-time channel normally already keeps this current, so REST polling isn't needed for it to stay accurate. When both sources have reported, whichever is actually newer wins.
+>
+> **²** Only delivered by REST, never by the real-time channel, so it updates only at Thing setup, on a `REFRESH`, or when `refreshInterval` is greater than 0. Set to `NULL` when a REST report carries an explicit `null`.
 
 ### Group `hardware`
 
-| Channel ID                   | Type   | R/W | Advanced | Description                             |
-| ---------------------------- | ------ | --- | -------- | --------------------------------------- |
-| `hardware#battery-level`     | Number | R   | No       | Battery charge level, 0–100 %¹          |
-| `hardware#temperature-state` | String | R   | Yes      | A hardware temperature-related state¹ ² |
+| Channel ID                    | Type   | R/W | Advanced | Description                                                      |
+| ----------------------------- | ------ | --- | -------- | ---------------------------------------------------------------- |
+| `hardware#battery-level`      | Number | R   | No       | Battery charge level, 0–100 %¹                                   |
+| `hardware#temperature-state`  | String | R   | Yes      | A hardware temperature-related state¹ ²                          |
+| `hardware#clip-mounted-state` | String | R   | Yes      | Probably whether the tracker is clipped into its collar mount² ³ |
 
 > **¹** Also updated by the periodic REST poll (`refreshInterval`), as a backstop — but the real-time channel normally already keeps this current, so REST polling isn't needed for it to stay accurate. When both sources have reported, whichever is actually newer wins.
 >
 > **²** Meaning unresolved — always `null` in every real capture taken so far.
+>
+> **³** Only delivered by REST, never by the real-time channel, so it updates only at Thing setup, on a `REFRESH`, or when `refreshInterval` is greater than 0. Set to `NULL` when a REST report carries an explicit `null`.
 
 ### Group `tracker-status`
 
@@ -353,9 +359,11 @@ Number:Speed  samson_Speed                 "Samson Speed"                       
 String        samson_SensorUsed            "Samson Sensor"                           ["Point"]                       { channel="tractive:dog-6:gert:samson:position#sensor-used" }
 Number:Length samson_Accuracy              "Samson Accuracy"                         ["Point"]                       { channel="tractive:dog-6:gert:samson:position#position-accuracy" }
 String        samson_NearbyUserId          "Samson Nearby User ID"                   ["Point"]                       { channel="tractive:dog-6:gert:samson:position#nearby-user-id" }
+String        samson_PositionStatus        "Samson Position Status"                  ["Point"]                       { channel="tractive:dog-6:gert:samson:position#position-status" }
 
 Number        samson_BatteryLevel          "Samson Battery"                <Battery> ["Energy", "Measurement"]       { channel="tractive:dog-6:gert:samson:hardware#battery-level" }
 String        samson_TemperatureState      "Samson Temperature State"                ["Point"]                       { channel="tractive:dog-6:gert:samson:hardware#temperature-state" }
+String        samson_ClipMountedState      "Samson Clip Mounted State"               ["Point"]                       { channel="tractive:dog-6:gert:samson:hardware#clip-mounted-state" }
 String        samson_ChargingState         "Samson Charging State"                   ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#charging-state" }
 String        samson_BatteryState          "Samson Battery State"                    ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#battery-state" }
 String        samson_TrackerState          "Samson Tracker State"                    ["Point"]                       { channel="tractive:dog-6:gert:samson:tracker-status#tracker-state" }

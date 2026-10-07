@@ -304,6 +304,20 @@ class TractiveTrackerHandlerPollGatingTest {
     }
 
     @Test
+    void pollHwReportMakesHttpCallWhenClipMountedStateIsLinked() {
+        lenient()
+                .when(callback.isChannelLinked(
+                        eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_CLIP_MOUNTED_STATE))))
+                .thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        handler.pollHwReport(bridge);
+
+        verify(httpClient).newRequest(anyString());
+    }
+
+    @Test
     void pollPositionReportSkipsHttpCallByDefaultBeforeAnyChannelIsLinked() {
         handler.pollPositionReport(bridge);
 
@@ -485,5 +499,22 @@ class TractiveTrackerHandlerPollGatingTest {
         verify(httpClient, times(2)).newRequest(anyString());
         verify(callback).statusUpdated(eq(thing), argThat(
                 info -> info.getStatus() == ThingStatus.ONLINE && info.getStatusDetail() == ThingStatusDetail.NONE));
+    }
+
+    @Test
+    void onChannelReconnectedSchedulesAPollAllOnTheScheduler() {
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        handler.onChannelReconnected();
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), eq(0L), eq(TimeUnit.SECONDS));
+        verifyNoInteractions(httpClient);
+
+        task.getValue().run();
+
+        // pollTrackerDetails() always proceeds on a handler that has never polled; the unlinked groups skip.
+        verify(httpClient).newRequest(anyString());
     }
 }
