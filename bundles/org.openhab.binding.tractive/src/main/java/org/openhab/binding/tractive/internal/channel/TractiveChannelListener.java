@@ -137,6 +137,9 @@ public class TractiveChannelListener {
             eventConsumer.accept(json);
         } catch (JsonSyntaxException e) {
             logger.debug("Ignoring unparseable channel line: {}", e.getMessage());
+        } catch (RuntimeException e) {
+            logger.warn("Unexpected {} while handling a channel line, skipping it: {}", e.getClass().getSimpleName(),
+                    e.getMessage());
         }
     }
 }

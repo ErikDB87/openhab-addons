@@ -39,9 +39,13 @@ class TractiveChannelListenerTest {
             connectedCalls::incrementAndGet);
 
     private void feed(String line) throws Exception {
+        feed(listener, line);
+    }
+
+    private void feed(TractiveChannelListener target, String line) throws Exception {
         Method method = TractiveChannelListener.class.getDeclaredMethod("processLine", String.class);
         method.setAccessible(true);
-        method.invoke(listener, line);
+        method.invoke(target, line);
     }
 
     @Test
@@ -80,6 +84,41 @@ class TractiveChannelListenerTest {
     @Test
     void unparseableLineIsIgnored() throws Exception {
         feed("not json");
+
+        assertEquals(0, connectedCalls.get());
+        assertTrue(events.isEmpty());
+    }
+
+    @Test
+    void throwingOnConnectedCallbackDoesNotPropagate() {
+        TractiveChannelListener failing = new TractiveChannelListener(events::add, () -> {
+            throw new IllegalStateException("boom");
+        });
+
+        assertDoesNotThrow(() -> feed(failing, "{\"message\":\"handshake\"}"));
+        assertTrue(events.isEmpty());
+    }
+
+    @Test
+    void throwingEventConsumerDoesNotPropagateAndLaterLinesAreStillHandled() throws Exception {
+        AtomicInteger consumerCalls = new AtomicInteger();
+        TractiveChannelListener failing = new TractiveChannelListener(json -> {
+            if (consumerCalls.incrementAndGet() == 1) {
+                throw new IllegalStateException("boom");
+            }
+            events.add(json);
+        }, connectedCalls::incrementAndGet);
+
+        assertDoesNotThrow(() -> feed(failing, "{\"message\":\"tracker_status\",\"tracker_id\":\"ABCD1234\"}"));
+        feed(failing, "{\"message\":\"tracker_status\",\"tracker_id\":\"ABCD1234\"}");
+
+        assertEquals(2, consumerCalls.get());
+        assertEquals(1, events.size());
+    }
+
+    @Test
+    void nonPrimitiveMessageFieldDoesNotPropagate() {
+        assertDoesNotThrow(() -> feed("{\"message\":{}}"));
 
         assertEquals(0, connectedCalls.get());
         assertTrue(events.isEmpty());
