@@ -187,6 +187,12 @@ class TractiveAccountHandlerTest {
         method.invoke(handler);
     }
 
+    private void invokeRunSubscriptionCheck() throws Exception {
+        Method method = TractiveAccountHandler.class.getDeclaredMethod("runSubscriptionCheck");
+        method.setAccessible(true);
+        method.invoke(handler);
+    }
+
     private void invokeCheckSubscriptions() throws Exception {
         Method method = TractiveAccountHandler.class.getDeclaredMethod("checkSubscriptions");
         method.setAccessible(true);
@@ -533,6 +539,26 @@ class TractiveAccountHandlerTest {
         ArgumentCaptor<JsonObject> captor = ArgumentCaptor.forClass(JsonObject.class);
         verify(listener).onSubscriptionUpdate(captor.capture());
         assertEquals("ACTIVE", captor.getValue().get("status").getAsString());
+    }
+
+    @Test
+    void runSubscriptionCheckSchedulesHourlyRecheckWhileNotActive() throws Exception {
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn(widgetDataJson("FCTPOEBK", "PAUSED"));
+
+        invokeRunSubscriptionCheck();
+
+        verify(mockScheduler).schedule(any(Runnable.class), eq(60L), eq(TimeUnit.MINUTES));
+    }
+
+    @Test
+    void runSubscriptionCheckSchedulesNoRecheckWhenActive() throws Exception {
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn(widgetDataJson("FCTPOEBK", "ACTIVE"));
+
+        invokeRunSubscriptionCheck();
+
+        verify(mockScheduler, never()).schedule(any(Runnable.class), anyLong(), eq(TimeUnit.MINUTES));
     }
 
     @Test

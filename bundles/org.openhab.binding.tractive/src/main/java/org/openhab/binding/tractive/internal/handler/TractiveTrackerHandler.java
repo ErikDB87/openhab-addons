@@ -117,6 +117,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     private final PollGuard<JsonObject> profileGuard = new PollGuard<>(DEFAULT_MIN_POLL_INTERVAL_MS);
 
     private volatile boolean powerSaving = false;
+    private volatile boolean subscriptionInactive;
     private final Map<String, ScheduledFuture<?>> autoOffTasks = new ConcurrentHashMap<>();
     private volatile boolean recurringPollEnabled;
     private volatile @Nullable Long lastAppliedPositionTime;
@@ -150,8 +151,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         logger.trace("Channel event: messageType={}", messageType);
         switch (messageType) {
             case MESSAGE_TRACKER_STATUS:
-                updatePowerSavingFlag(event, FIELD_TRACKER_STATE_REASON);
-                updateStringChannel(CHANNEL_TRACKER_STATE_REASON, event, FIELD_TRACKER_STATE_REASON, true);
+                applyTrackerStateReason(event);
                 applyControlState(CHANNEL_LED, event, COMMAND_LED_CONTROL);
                 applyControlState(CHANNEL_BUZZER, event, COMMAND_BUZZER_CONTROL);
                 updateControlTiming(CHANNEL_LED_TIMEOUT, CHANNEL_LED_REMAINING, event, COMMAND_LED_CONTROL);
@@ -692,6 +692,9 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * the Tracker Status fields it also reads stay seed-once (see {@link #applyTrackerDetails}). The rest of
      * Device Info, and Profile, are still off this schedule -- see {@link #applyTrackerDetails} and
      * {@link #pollProfile}.
+     *
+     * While the bridge reports an explicit non-{@code ACTIVE} subscription ({@link #subscriptionInactive}), the
+     * hardware, position and health polls are skipped. Polling resumes from {@link #onSubscriptionUpdate}.
      */
     protected void pollAll() {
         TractiveAccountHandler bridge = getAccountHandler();
@@ -699,6 +702,10 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
             return;
         }
         pollTrackerDetails(bridge);
+        if (subscriptionInactive) {
+            logger.debug("Skipping hardware, position and health polls: subscription is not active");
+            return;
+        }
         pollHwReport(bridge);
         pollPositionReport(bridge);
         pollHealthOverview(bridge);
@@ -1483,11 +1490,25 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
      * extracted from its periodic {@code user/widget-data} check (see
      * {@link TractiveAccountHandler#checkSubscriptions}). The tracker fetches nothing itself; both
      * {@link #updateStringChannel}/{@link #updateEpochChannel} no-op for an unlinked channel.
+     *
+     * Also opens or closes the {@link #subscriptionInactive} polling gate, and runs one catch-up poll when the
+     * subscription becomes active again so the Thing doesn't wait for the next scheduled cycle.
      */
     @Override
     public void onSubscriptionUpdate(JsonObject subscription) {
         updateStringChannel(CHANNEL_SUBSCRIPTION_STATUS, subscription, FIELD_STATUS, true);
         updateEpochChannel(CHANNEL_SUBSCRIPTION_VALID_TO, subscription, FIELD_VALID_TO);
+
+        boolean wasInactive = subscriptionInactive;
+        boolean nowInactive = TractiveAccountHandler.isSubscriptionInactive(subscription);
+        subscriptionInactive = nowInactive;
+        if (nowInactive && !wasInactive) {
+            logger.info(
+                    "Subscription is not active; hardware, position and health polling is paused until it is renewed");
+        } else if (wasInactive && !nowInactive) {
+            logger.info("Subscription is active again; resuming polling");
+            taskTracker.track(scheduler.schedule(this::pollAll, 0, TimeUnit.SECONDS));
+        }
     }
 
     /**
@@ -1512,6 +1533,28 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         TractiveAccountHandler bridge = getAccountHandler();
         if (bridge != null) {
             pollProfile(bridge);
+        }
+    }
+
+    /**
+     * Applies {@code tracker_state_reason} from a {@code tracker_status} push. A push that reports
+     * {@code tracker_state} but no reason means the reason was cleared (the tracker left {@code POWER_SAVING},
+     * {@code STALE_POSITION}, ...): the real-time channel then omits the key rather than sending {@code null}. A push
+     * without {@code tracker_state} is partial, so neither the dormancy flag nor the channel is touched.
+     */
+    private void applyTrackerStateReason(JsonObject event) {
+        JsonElement stateEl = event.get(FIELD_TRACKER_STATE_LIVE);
+        boolean stateReported = stateEl != null && !stateEl.isJsonNull();
+        boolean reasonPresent = event.has(FIELD_TRACKER_STATE_REASON);
+        if (stateReported || reasonPresent) {
+            updatePowerSavingFlag(event, FIELD_TRACKER_STATE_REASON);
+        }
+        if (stateReported && !reasonPresent) {
+            if (isLinked(CHANNEL_TRACKER_STATE_REASON)) {
+                updateState(CHANNEL_TRACKER_STATE_REASON, UnDefType.NULL);
+            }
+        } else {
+            updateStringChannel(CHANNEL_TRACKER_STATE_REASON, event, FIELD_TRACKER_STATE_REASON, true);
         }
     }
 

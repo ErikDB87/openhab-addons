@@ -73,6 +73,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private static final long RECONNECT_INITIAL_DELAY_S = 15;
     private static final long RECONNECT_MAX_DELAY_S = 300;
     private static final int SUBSCRIPTION_CHECK_INTERVAL_HOURS = 24;
+    private static final long SUBSCRIPTION_RECHECK_WHEN_INACTIVE_MINUTES = 60;
     private static final int TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE = 3;
     private static final long TOKEN_EXPIRY_ESCALATION_BUFFER_S = TOKEN_REFRESH_INTERVAL_MINUTES * 60 * 2;
 
@@ -82,6 +83,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private final TractiveTaskTracker taskTracker = new TractiveTaskTracker();
     private final CopyOnWriteArrayList<TractiveEventListener> eventListeners = new CopyOnWriteArrayList<>();
     private final Map<String, JsonObject> lastKnownSubscriptions = new ConcurrentHashMap<>();
+    private @Nullable ScheduledFuture<?> subscriptionRecheckFuture;
 
     private volatile @Nullable String accessToken;
     private @Nullable String userId;
@@ -157,7 +159,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
                 discovery.runAutomaticScanOnce();
             }
 
-            taskTracker.track(scheduler.scheduleWithFixedDelay(this::checkSubscriptions, 0,
+            taskTracker.track(scheduler.scheduleWithFixedDelay(this::runSubscriptionCheck, 0,
                     SUBSCRIPTION_CHECK_INTERVAL_HOURS, TimeUnit.HOURS));
 
             scheduleCheckAndRefreshToken(TOKEN_REFRESH_INTERVAL_MINUTES * 60);
@@ -538,9 +540,17 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
                 JsonElement statusEl = subscription.get(FIELD_STATUS);
                 String subStatus = statusEl != null && statusEl.isJsonPrimitive() ? statusEl.getAsString() : "unknown";
                 if (!VALUE_SUBSCRIPTION_ACTIVE.equals(subStatus)) {
-                    logger.warn(
-                            "Tracker {} subscription status is '{}' — commands, live tracking, and real-time updates may not work until it is renewed in the Tractive app.",
-                            id != null ? id : "?", subStatus);
+                    JsonObject previous = id != null ? lastKnownSubscriptions.get(id) : null;
+                    JsonElement previousStatusEl = previous != null ? previous.get(FIELD_STATUS) : null;
+                    boolean statusUnchanged = previousStatusEl != null && previousStatusEl.isJsonPrimitive()
+                            && previousStatusEl.getAsString().equals(subStatus);
+                    if (statusUnchanged) {
+                        logger.debug("Tracker {} subscription status is still '{}'", id != null ? id : "?", subStatus);
+                    } else {
+                        logger.warn(
+                                "Tracker {} subscription status is '{}' — commands, live tracking, and real-time updates may not work until it is renewed in the Tractive app.",
+                                id != null ? id : "?", subStatus);
+                    }
                 }
 
                 if (id != null) {
@@ -556,6 +566,32 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
             Thread.currentThread().interrupt();
         } catch (RuntimeException | TimeoutException | ExecutionException e) {
             logger.debug("Subscription check failed: {}", e.getMessage());
+        }
+    }
+
+    static boolean isSubscriptionInactive(JsonObject subscription) {
+        JsonElement statusEl = subscription.get(FIELD_STATUS);
+        return statusEl != null && statusEl.isJsonPrimitive()
+                && !VALUE_SUBSCRIPTION_ACTIVE.equals(statusEl.getAsString());
+    }
+
+    private void runSubscriptionCheck() {
+        checkSubscriptions();
+        updateSubscriptionRecheck();
+    }
+
+    private synchronized void updateSubscriptionRecheck() {
+        ScheduledFuture<?> previous = subscriptionRecheckFuture;
+        if (previous != null) {
+            previous.cancel(false);
+            subscriptionRecheckFuture = null;
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            return;
+        }
+        if (lastKnownSubscriptions.values().stream().anyMatch(TractiveAccountHandler::isSubscriptionInactive)) {
+            subscriptionRecheckFuture = taskTracker.track(scheduler.schedule(this::runSubscriptionCheck,
+                    SUBSCRIPTION_RECHECK_WHEN_INACTIVE_MINUTES, TimeUnit.MINUTES));
         }
     }
 
