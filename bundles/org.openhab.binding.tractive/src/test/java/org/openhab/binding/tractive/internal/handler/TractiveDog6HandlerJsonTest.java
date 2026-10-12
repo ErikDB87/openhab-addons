@@ -722,6 +722,41 @@ class TractiveDog6HandlerJsonTest {
     }
 
     @Test
+    void trackerStatusWithStateButNoReasonClearsTrackerStateReason() {
+        JsonObject event = new JsonObject();
+        event.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_LIVE, "OPERATIONAL");
+
+        Map<String, State> updates = captureUpdates(
+                () -> handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event));
+
+        assertEquals(UnDefType.NULL, updates.get(TractiveBindingConstants.CHANNEL_TRACKER_STATE_REASON));
+    }
+
+    @Test
+    void trackerStatusWithStateAndReasonSetsTrackerStateReason() {
+        JsonObject event = new JsonObject();
+        event.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_LIVE, "OPERATIONAL");
+        event.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_REASON, "POWER_SAVING");
+
+        Map<String, State> updates = captureUpdates(
+                () -> handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event));
+
+        assertEquals(new StringType("POWER_SAVING"),
+                updates.get(TractiveBindingConstants.CHANNEL_TRACKER_STATE_REASON));
+    }
+
+    @Test
+    void partialTrackerStatusWithoutStateLeavesTrackerStateReasonUntouched() {
+        JsonObject event = new JsonObject();
+        event.addProperty(TractiveBindingConstants.FIELD_CHARGING_STATE, "NOT_CHARGING");
+
+        Map<String, State> updates = captureUpdates(
+                () -> handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, event));
+
+        assertFalse(updates.containsKey(TractiveBindingConstants.CHANNEL_TRACKER_STATE_REASON));
+    }
+
+    @Test
     void updateTimestampChannelWithEpochLongProducesCorrectInstant() {
         long epoch = 1784832952L;
         JsonObject json = new JsonObject();
@@ -1070,6 +1105,42 @@ class TractiveDog6HandlerJsonTest {
                 eq(OnOffType.OFF));
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER_REMAINING)),
                 eq(new QuantityType<>(0, Units.SECOND)));
+    }
+
+    @Test
+    void partialTrackerStatusWithoutStateKeepsDormancyFlagSoPredictedAutoOffStillFires() {
+        JsonObject dormantPush = new JsonObject();
+        dormantPush.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_REASON,
+                TractiveBindingConstants.VALUE_STATE_REASON_POWER_SAVING);
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, dormantPush);
+
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, buzzerControlEvent(true, 0.05, null));
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+        task.getValue().run();
+
+        verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER)),
+                eq(OnOffType.OFF));
+    }
+
+    @Test
+    void trackerStatusWithStateButNoReasonClearsDormancyFlagSoPredictedAutoOffIsSkipped() {
+        JsonObject dormantPush = new JsonObject();
+        dormantPush.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_REASON,
+                TractiveBindingConstants.VALUE_STATE_REASON_POWER_SAVING);
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, dormantPush);
+
+        JsonObject awakePush = buzzerControlEvent(true, 0.05, null);
+        awakePush.addProperty(TractiveBindingConstants.FIELD_TRACKER_STATE_LIVE, "OPERATIONAL");
+        handler.onChannelEvent(TractiveBindingConstants.MESSAGE_TRACKER_STATUS, awakePush);
+
+        ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
+        verify(mockScheduler).schedule(task.capture(), anyLong(), any(TimeUnit.class));
+        task.getValue().run();
+
+        verify(callback, never()).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BUZZER)),
+                eq(OnOffType.OFF));
     }
 
     @Test

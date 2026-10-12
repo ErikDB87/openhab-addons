@@ -12,6 +12,7 @@
  */
 package org.openhab.binding.tractive.internal.handler;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -231,6 +232,68 @@ class TractiveTrackerHandlerPollGatingTest {
 
         verify(callback).stateUpdated(eq(new ChannelUID(THING_UID, TractiveBindingConstants.CHANNEL_BATTERY_SAVE_MODE)),
                 eq(OnOffType.ON));
+    }
+
+    private static com.google.gson.JsonObject subscriptionWithStatus(String status) {
+        com.google.gson.JsonObject subscription = new com.google.gson.JsonObject();
+        subscription.addProperty(TractiveBindingConstants.FIELD_STATUS, status);
+        return subscription;
+    }
+
+    private java.util.List<String> requestedUrls() {
+        org.mockito.ArgumentCaptor<String> urls = org.mockito.ArgumentCaptor.forClass(String.class);
+        verify(httpClient, atLeastOnce()).newRequest(urls.capture());
+        return urls.getAllValues();
+    }
+
+    @Test
+    void pollAllPollsHardwareReportWhenSubscriptionIsActive() {
+        when(callback.isChannelLinked(any())).thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        handler.onSubscriptionUpdate(subscriptionWithStatus("ACTIVE"));
+        handler.pollAll();
+
+        // Control for the gated test below: proves the hardware poll does run in this fixture.
+        assertTrue(requestedUrls().stream().anyMatch(url -> url.contains("device_hw_report")));
+    }
+
+    @Test
+    void pollAllSkipsHardwarePollButStillSeedsTrackerDetailsWhenSubscriptionIsNotActive() {
+        when(callback.isChannelLinked(any())).thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        handler.onSubscriptionUpdate(subscriptionWithStatus("PAUSED"));
+        handler.pollAll();
+
+        java.util.List<String> urls = requestedUrls();
+        assertTrue(urls.stream().noneMatch(url -> url.contains("device_hw_report")));
+        assertTrue(urls.stream().anyMatch(url -> url.contains("tracker/" + SAMSON_TRACKER_ID)));
+    }
+
+    @Test
+    void pollAllStillPollsHardwareReportWhenSubscriptionStatusIsMissing() {
+        when(callback.isChannelLinked(any())).thenReturn(true);
+        when(response.getStatus()).thenReturn(HttpStatus.OK_200);
+        when(response.getContentAsString()).thenReturn("{}");
+
+        handler.onSubscriptionUpdate(new com.google.gson.JsonObject());
+        handler.pollAll();
+
+        assertTrue(requestedUrls().stream().anyMatch(url -> url.contains("device_hw_report")));
+    }
+
+    @Test
+    void subscriptionBecomingActiveAgainSchedulesCatchUpPoll() {
+        lenient().when(callback.isChannelLinked(any())).thenReturn(true);
+
+        handler.onSubscriptionUpdate(subscriptionWithStatus("PAUSED"));
+        verify(mockScheduler, never()).schedule(any(Runnable.class), eq(0L), eq(TimeUnit.SECONDS));
+
+        handler.onSubscriptionUpdate(subscriptionWithStatus("ACTIVE"));
+        verify(mockScheduler).schedule(any(Runnable.class), eq(0L), eq(TimeUnit.SECONDS));
     }
 
     @Test
