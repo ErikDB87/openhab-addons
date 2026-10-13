@@ -37,7 +37,6 @@ import org.openhab.binding.tractive.internal.TractiveBindingConstants;
 import org.openhab.binding.tractive.internal.TractiveStateDescriptionProvider;
 import org.openhab.binding.tractive.internal.util.PollGuard;
 import org.openhab.binding.tractive.internal.util.SharedRateLimitBucket;
-import org.openhab.binding.tractive.internal.util.TractiveRetryUtil;
 import org.openhab.core.library.types.OnOffType;
 import org.openhab.core.thing.ChannelUID;
 import org.openhab.core.thing.Thing;
@@ -154,7 +153,7 @@ class TractiveTrackerHandlerSharedBudgetTest {
      * Configures {@code handler} for the "recurringPollEnabled == false, bucket believed empty, HTTP 429" scenario
      * shared by the four {@code budgetDenied...WithRecurringDisabled...} tests below: forces
      * {@code recurringPollEnabled} to {@code false} (the real-world default), reflectively injects a scheduler that
-     * runs {@link TractiveRetryUtil}'s retry tasks synchronously (avoiding a real 6 s wait per attempt), and stubs
+     * runs {@code TractiveRetryUtil}'s retry tasks synchronously (avoiding a real 6 s wait per attempt), and stubs
      * the HTTP response to 429.
      *
      * @return a mocked {@link SharedRateLimitBucket} whose {@code tryConsume()} always reports empty

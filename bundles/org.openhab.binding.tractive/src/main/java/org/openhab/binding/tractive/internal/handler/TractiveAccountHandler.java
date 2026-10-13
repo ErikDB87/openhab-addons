@@ -569,6 +569,10 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         }
     }
 
+    /**
+     * Whether a {@code subscription} object carries an explicit status other than {@code ACTIVE}. A missing or
+     * non-string status is deliberately not "inactive": callers use this to pause polling, which must fail open.
+     */
     static boolean isSubscriptionInactive(JsonObject subscription) {
         JsonElement statusEl = subscription.get(FIELD_STATUS);
         return statusEl != null && statusEl.isJsonPrimitive()
