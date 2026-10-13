@@ -334,6 +334,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
      * up on whatever was pushed while the stream was down.
      */
     private void onChannelConnected() {
+        channelReconnectDelaySeconds = RECONNECT_INITIAL_DELAY_S;
         if (!channelConnectedBefore) {
             channelConnectedBefore = true;
             return;

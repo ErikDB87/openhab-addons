@@ -666,6 +666,17 @@ class TractiveAccountHandlerTest {
         verify(listener, times(2)).onChannelReconnected();
     }
 
+    @Test
+    void channelConnectResetsReconnectBackoff() throws Exception {
+        setPrivateField("channelReconnectDelaySeconds", 120L);
+
+        invokeOnChannelConnected();
+
+        Field delay = TractiveAccountHandler.class.getDeclaredField("channelReconnectDelaySeconds");
+        delay.setAccessible(true);
+        assertEquals(15L, delay.getLong(handler));
+    }
+
     private void invokeOnChannelConnected() throws Exception {
         Method method = TractiveAccountHandler.class.getDeclaredMethod("onChannelConnected");
         method.setAccessible(true);
