@@ -39,7 +39,7 @@ Capabilities exposed by this binding:
 - **LED** — remotely activate the LED light on the tracker
 - **Live tracking** — enable high-frequency location updates on demand
 - **Command timing** — for the buzzer, LED, and live tracking: configured auto-stop duration and seconds remaining before it stops
-- **Pet profile** — breed, sex, birthday, height, weight, neutered status, and home location, as entered in the Tractive app (fetched once at Thing setup, refreshable on demand — see the `profile` channel group below)
+- **Pet profile** — breed, sex, birthday, height, weight, neutered status, and home location, as entered in the Tractive app (fetched when the Thing starts, refreshable on demand — see the `profile` channel group below)
 - **Last contact** — timestamp of the most recent successful contact with the tracker, be it via REST poll or real-time event
 
 ## Discovery
@@ -227,8 +227,8 @@ The tracker's model code, hardware edition, firmware version, and geofence sensi
 The rest of this group's data — breed, sex, birthday, neutered status, account access level, microchip ID, and more — is exposed as Thing [properties](#properties), not channels.
 
 > **Note:** This group holds mostly-static pet-profile data from the Tractive app (breed, birthday, weight, etc.).
-> Neither the channels above nor the properties are part of the timed polling schedule (`refreshInterval`) — they're populated once when the Thing is created, and after that only update when something explicitly asks for it: the `refreshProfile()` action, or a `REFRESH` command sent to any channel on this Thing (e.g. clicking refresh in the UI).
-> If you edit this data in the Tractive app, values here stay stale until one of those happens.
+> Neither the channels above nor the properties are part of the timed polling schedule (`refreshInterval`) — they're fetched when the Thing starts (on creation, when it is re-enabled, or when openHAB restarts), and after that only update when something explicitly asks for it: the `refreshProfile()` action, or a `REFRESH` command sent to any channel on this Thing (e.g. clicking refresh in the UI).
+> The Tractive API doesn't push profile changes, so if you edit this data in the Tractive app (a new weight, for example), values here stay stale until one of those happens.
 >
 > **`height`/`weight` are writable, but only for the pet's owner account.** Tractive's API itself enforces this —
 > sending a command from a shared/invited account is rejected server-side and logged as a WARN; nothing is sent
@@ -255,7 +255,7 @@ The `dog-6` Thing exposes these read-only properties, shown on the Thing's page 
 
 These come from `tracker/{trackerId}`: seeded at Thing setup, and refreshed on the same poll that keeps `device-info#battery-save-mode` current (so they also track `refreshInterval` while that channel is linked) as well as on the `refreshHardware()` action.
 
-The `dog-6` Thing also exposes these pet-profile properties, from `trackable_object/{petId}` — populated once at Thing setup and refreshed only via the `refreshProfile()` action or a `REFRESH` command, same as `profile#height`/`weight`/`home-location`/`last-updated`:
+The `dog-6` Thing also exposes these pet-profile properties, from `trackable_object/{petId}` — fetched when the Thing starts and refreshed after that only via the `refreshProfile()` action or a `REFRESH` command, same as `profile#height`/`weight`/`home-location`/`last-updated`:
 
 | Property             | Description                                                                                                                                                                         |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
