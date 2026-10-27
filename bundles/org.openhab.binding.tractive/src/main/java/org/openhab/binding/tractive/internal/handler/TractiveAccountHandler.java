@@ -142,8 +142,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
     private void initializeBridge() {
         TractiveAccountConfiguration localConfig = getConfigAs(TractiveAccountConfiguration.class);
         if (localConfig.email.isBlank() || localConfig.password.isBlank()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "Email and password must be configured");
+            updateStatus(ThingStatusDetail.CONFIGURATION_ERROR, "Email and password must be configured");
             return;
         }
         config = localConfig;
@@ -168,8 +167,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         } catch (InterruptedIOException e) {
             // Thread already re-interrupted inside authenticate(); exit without touching status.
         } catch (IOException e) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                    "Authentication failed: " + e.getMessage());
+            updateStatus(ThingStatusDetail.COMMUNICATION_ERROR, "Authentication failed: " + e.getMessage());
             long nextDelay = bridgeAuthRetryDelaySeconds;
             bridgeAuthRetryDelaySeconds = Math.min(bridgeAuthRetryDelaySeconds * 2, RECONNECT_MAX_DELAY_S);
             scheduleInitializeBridge(nextDelay);
@@ -262,8 +260,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
      */
     private void handleTokenRefreshFailure(Exception e) {
         if (e instanceof RuntimeException) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                    "Token refresh failed: " + e.getMessage());
+            updateStatus(ThingStatusDetail.COMMUNICATION_ERROR, "Token refresh failed: " + e.getMessage());
             logger.warn("Token refresh failed unexpectedly, bridge offline: {}", e.getMessage());
             return;
         }
@@ -271,8 +268,7 @@ public class TractiveAccountHandler extends BaseBridgeHandler {
         long secondsToExpiry = expiresAt - System.currentTimeMillis() / 1000;
         if (consecutiveTokenRefreshFailures >= TOKEN_REFRESH_FAILURES_BEFORE_OFFLINE
                 || secondsToExpiry < TOKEN_EXPIRY_ESCALATION_BUFFER_S) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
-                    "Token refresh failed: " + e.getMessage());
+            updateStatus(ThingStatusDetail.COMMUNICATION_ERROR, "Token refresh failed: " + e.getMessage());
             logger.warn("Token refresh failed ({} consecutive, {}s to token expiry), bridge offline: {}",
                     consecutiveTokenRefreshFailures, secondsToExpiry, e.getMessage());
         } else {

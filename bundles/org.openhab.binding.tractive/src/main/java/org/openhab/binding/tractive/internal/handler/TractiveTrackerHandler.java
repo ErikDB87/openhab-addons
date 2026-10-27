@@ -225,20 +225,19 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
         healthOverviewLinked = isAnyHealthOverviewChannelLinked();
 
         if (trackerId.isBlank()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR, "Tracker ID must be configured");
+            updateStatus(ThingStatusDetail.CONFIGURATION_ERROR, "Tracker ID must be configured");
             return;
         }
         if (trackedPetId.isBlank()) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.CONFIGURATION_ERROR,
-                    "Pet/trackable ID must be configured");
+            updateStatus(ThingStatusDetail.CONFIGURATION_ERROR, "Pet/trackable ID must be configured");
             return;
         }
 
-        updateStatus(ThingStatus.UNKNOWN, ThingStatusDetail.NOT_YET_READY);
+        updateStatus(ThingStatus.UNKNOWN);
 
         TractiveAccountHandler bridge = getAccountHandler();
         if (bridge == null) {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_UNINITIALIZED, "No bridge configured");
+            updateStatus(ThingStatusDetail.BRIDGE_UNINITIALIZED, "No bridge configured");
             return;
         }
         bridge.registerListener(this);
@@ -255,7 +254,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                             config.refreshInterval, TimeUnit.SECONDS));
                 }
             } catch (RuntimeException e) {
-                updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                updateStatus(ThingStatusDetail.COMMUNICATION_ERROR,
                         "Unexpected error during initialization: " + e.getMessage());
             }
         }, 0, TimeUnit.SECONDS));
@@ -264,7 +263,7 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
     @Override
     public void bridgeStatusChanged(ThingStatusInfo bridgeStatusInfo) {
         if (bridgeStatusInfo.getStatus() == ThingStatus.ONLINE) {
-            updateStatus(ThingStatus.UNKNOWN, ThingStatusDetail.NOT_YET_READY);
+            updateStatus(ThingStatus.UNKNOWN);
             TractiveAccountHandler bridge = getAccountHandler();
             taskTracker.track(scheduler.schedule(() -> {
                 try {
@@ -274,12 +273,12 @@ public abstract class TractiveTrackerHandler extends BaseThingHandler implements
                     }
                     updateStatus(ThingStatus.ONLINE);
                 } catch (RuntimeException e) {
-                    updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.COMMUNICATION_ERROR,
+                    updateStatus(ThingStatusDetail.COMMUNICATION_ERROR,
                             "Unexpected error during refresh: " + e.getMessage());
                 }
             }, 0, TimeUnit.SECONDS));
         } else {
-            updateStatus(ThingStatus.OFFLINE, ThingStatusDetail.BRIDGE_OFFLINE);
+            updateStatus(ThingStatusDetail.BRIDGE_OFFLINE);
         }
     }
 

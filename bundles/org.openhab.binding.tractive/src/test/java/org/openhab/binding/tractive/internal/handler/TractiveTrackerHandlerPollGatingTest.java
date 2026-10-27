@@ -550,8 +550,8 @@ class TractiveTrackerHandlerPollGatingTest {
 
         handler.bridgeStatusChanged(new ThingStatusInfo(ThingStatus.ONLINE, ThingStatusDetail.NONE, null));
 
-        verify(callback).statusUpdated(eq(thing), argThat(info -> info.getStatus() == ThingStatus.UNKNOWN
-                && info.getStatusDetail() == ThingStatusDetail.NOT_YET_READY));
+        verify(callback).statusUpdated(eq(thing), argThat(
+                info -> info.getStatus() == ThingStatus.UNKNOWN && info.getStatusDetail() == ThingStatusDetail.NONE));
 
         ArgumentCaptor<Runnable> task = ArgumentCaptor.forClass(Runnable.class);
         verify(mockScheduler).schedule(task.capture(), eq(0L), eq(TimeUnit.SECONDS));
